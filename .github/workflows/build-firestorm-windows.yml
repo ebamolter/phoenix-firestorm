@@ -1,0 +1,76 @@
+name: Build Firestorm Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch_or_tag:
+        description: 'Branch or tag to build (例: 7.2.0_preview / Firestorm_7.1.13)'
+        required: true
+        default: '7.2.0_preview'
+      do_package:
+        description: 'Create installer/package? (容量・時間が増大します)'
+        required: true
+        default: 'false'
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout phoenix-firestorm
+        uses: actions/checkout@v4
+        with:
+          repository: FirestormViewer/phoenix-firestorm
+          ref: ${{ github.event.inputs.branch_or_tag }}
+          fetch-depth: 1
+
+      # Windowsの長いパスでの失敗を避ける
+      - name: Enable Git long paths
+        run: git config --system core.longpaths true
+        shell: bash
+
+      # VS2022の開発者コマンドを有効化（x64）
+      - name: Setup MSVC dev cmd
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Python + autobuild（公式のpip導入）
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Autobuild
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install autobuild
+
+      # Configure（ReleaseFS_open / 64bit）
+      - name: Configure Firestorm
+        shell: cmd
+        run: |
+          autobuild configure -A 64 -c ReleaseFS_open
+
+      # Build（余計なMSBuildスイッチは付けない）
+      - name: Build Firestorm
+        shell: cmd
+        run: |
+          autobuild build -A 64 -c ReleaseFS_open --no-configure
+
+      # Packageは任意（容量と時間が大きいので初回はfalseを推奨）
+      - name: Package Firestorm (optional)
+        if: ${{ github.event.inputs.do_package == 'true' }}
+        shell: cmd
+        run: |
+          autobuild package -A 64 -c ReleaseFS_open
+
+      # 成果物アップロード
+      # パッケージありなら packaged/、無ければ ReleaseFS_open/ を拾う
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestorm-windows
+          path: |
+            build-vc*-64\newview\packaged
+            build-vc*-64\newview\ReleaseFS_open
