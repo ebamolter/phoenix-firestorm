@@ -1,4 +1,4 @@
-name: Build Firestorm Windows
+name: test Build Firestorm Windows
 
 on:
   workflow_dispatch:
