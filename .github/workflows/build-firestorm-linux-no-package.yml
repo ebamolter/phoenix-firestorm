@@ -1,0 +1,67 @@
+name: Build Firestorm Linux (no package)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch_or_tag:
+        description: 'Branch or tag to build (例: 7.2.0_preview / Firestorm_7.1.13)'
+        required: true
+        default: '7.2.0_preview'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout phoenix-firestorm
+        uses: actions/checkout@v4
+        with:
+          repository: FirestormViewer/phoenix-firestorm
+          ref: ${{ github.event.inputs.branch_or_tag }}
+          fetch-depth: 1
+
+      # 容量不足回避のためランナーの不要ファイル削除
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost || true
+          sudo apt-get clean
+          sudo docker system prune -af || true
+          df -h
+
+      - name: Clone fs-build-variables
+        run: |
+          mkdir -p $HOME/src
+          cd $HOME/src
+          git clone https://github.com/FirestormViewer/fs-build-variables.git
+
+      - name: Install dependencies (from building_linux.md)
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            libgl1-mesa-dev libglu1-mesa-dev libpulse-dev \
+            build-essential python3-pip git libssl-dev \
+            libxinerama-dev libxrandr-dev libfontconfig-dev libfreetype6-dev \
+            gcc-11 cmake
+
+      - name: Install Autobuild
+        run: |
+          sudo pip3 install --upgrade pip
+          pip install -r requirements.txt
+          autobuild --version
+
+      - name: Set AUTOBUILD_VARIABLES_FILE
+        run: echo "AUTOBUILD_VARIABLES_FILE=$HOME/src/fs-build-variables/variables" >> $GITHUB_ENV
+
+      # パッケージを完全オフにしてビルド
+      - name: Configure (no package)
+        run: autobuild configure -A 64 -c ReleaseFS_open -- -DLL_TESTS:BOOL=FALSE -DPACKAGE:BOOL=Off
+
+      - name: Build
+        run: autobuild build -A 64 -c ReleaseFS_open
+
+      # ビルド結果の packaged フォルダをそのまま Artifact として保存
+      - name: Upload unpackaged viewer
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestorm-linux-unpackaged
+          path: build-linux-x86_64/newview/packaged
