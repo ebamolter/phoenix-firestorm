@@ -1,4 +1,4 @@
-name: Build Firestorm Windows Test
+name: Build Firestorm Windows
 
 on:
   workflow_dispatch:
@@ -7,84 +7,52 @@ on:
         description: 'Branch or tag to build (例: 7.2.0_preview / Firestorm_7.1.13)'
         required: true
         default: '7.2.0_preview'
-      create_package:
+      create_installer:
         description: 'Create installer/package? (容量・時間が増大します)'
         required: true
         default: 'false'
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-22.04
+  build:
+    runs-on: windows-latest
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          repository: FirestormViewer/phoenix-firestorm
           ref: ${{ github.event.inputs.branch }}
+          submodules: true
 
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y python3 python3-pip build-essential cmake ninja-build \
-            libgl1-mesa-dev libglu1-mesa-dev libxrandr-dev libxinerama-dev \
-            libxcursor-dev libxi-dev uuid-dev libssl-dev libxml2-dev \
-            libpng-dev libjpeg-dev libtiff-dev libbz2-dev libapr1-dev \
-            libaprutil1-dev libgoogle-perftools-dev
+      - name: Prepare Variables File
+        run: echo "変数ファイル準備中..."
 
-      - name: Prepare variables file
-        run: |
-          mkdir -p indra/build_secrets
-          echo "AUTOBUILD_VARIABLES_CONTENT" > indra/build_secrets/variables
-
-      - name: Upload variables file
-        uses: actions/upload-artifact@v4
-        with:
-          name: variables
-          path: indra/build_secrets/variables
-
-  build-windows:
-    needs: build-linux
-    runs-on: windows-2022
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          repository: FirestormViewer/phoenix-firestorm
-          ref: ${{ github.event.inputs.branch }}
-
-      - name: Download variables file
-        uses: actions/download-artifact@v4
-        with:
-          name: variables
-          path: indra/build_secrets
-
-      - name: Verify variables file
-        run: dir indra\build_secrets
-
-      - name: Install dependencies
-        shell: pwsh
-        run: |
-          choco install git cmake python --yes
-          refreshenv
-
-      - name: Configure build
+      - name: Fix dependencies for libgoogle-perftools-dev
         shell: bash
         run: |
-          autobuild configure -c ReleaseFS_open
+          sudo apt-get update
+          sudo apt-get install -y libunwind-dev
 
-      - name: Build
+      - name: Install prerequisites
         shell: bash
         run: |
-          autobuild build -c ReleaseFS_open -A 64 --no-configure
+          sudo apt-get install -y \
+            libgoogle-perftools-dev \
+            uuid-dev \
+            python3-pip
+
+      - name: Configure Firestorm
+        run: |
+          autobuild configure -A 64 -c ReleaseFS_open --platform windows
+
+      - name: Build Firestorm
+        run: autobuild build -A 64 -c ReleaseFS_open --platform windows
 
       - name: Package (optional)
-        if: ${{ github.event.inputs.create_package == 'true' }}
-        shell: bash
-        run: |
-          autobuild package -c ReleaseFS_open
+        if: ${{ github.event.inputs.create_installer == 'true' }}
+        run: autobuild package -A 64 -c ReleaseFS_open --platform windows
 
-      - name: Upload build artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: firestorm-windows-build
-          path: build-vc*/*
+          name: firestorm-windows
+          path: build-*/newview/Release
