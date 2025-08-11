@@ -1,47 +1,62 @@
-name: test Build Firestorm Windows
+name: Build Firestorm Windows Test
 
 on:
   workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Branch or tag to build (例: 7.2.0_preview / Firestorm_7.1.13)'
-        required: true
-        default: '7.2.0_preview'
-      create_package:
-        description: 'Create installer/package? (容量・時間が増大します)'
-        required: true
-        default: 'false'
 
 jobs:
-  build:
-    runs-on: windows-latest
-
+  build-linux:
+    runs-on: ubuntu-22.04
     steps:
-    - name: Checkout Firestorm
-      uses: actions/checkout@v3
-      with:
-        ref: ${{ github.event.inputs.branch }}
-        submodules: recursive
+      - name: Checkout Firestorm
+        uses: actions/checkout@v4
 
-    - name: Install Autobuild
-      run: |
-        pip install autobuild
+      - name: Install Autobuild
+        run: |
+          pip install autobuild
 
-    - name: Prepare Variables File
-      run: |
-        # Linuxビルド時に使ったvariablesファイルをArtifactから取得
-        # または手動で同ディレクトリに置く
-        echo "AUTOBUILD_VARIABLES_FILE=${{ github.workspace }}\\indra\\build_secrets\\variables" >> $env:GITHUB_ENV
+      - name: Configure Firestorm Linux
+        run: |
+          autobuild configure -A 64 -c ReleaseFS_open --platform linux
 
-    - name: Configure Firestorm
-      run: autobuild configure -A 64 -c ReleaseFS_open -- -platform windows
+      - name: Save Variables File
+        run: |
+          mkdir -p indra/build_secrets
+          cp indra/build_secrets/variables variables
+        shell: bash
 
-    - name: Build Firestorm
-      run: autobuild build -A 64 -c ReleaseFS_open -- -platform windows
+      - name: Upload Variables File
+        uses: actions/upload-artifact@v4
+        with:
+          name: variables
+          path: variables
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: firestorm-windows
-        path: build-vc*/newview/Release/*
+  build-windows:
+    needs: build-linux
+    runs-on: windows-2022
+    steps:
+      - name: Checkout Firestorm
+        uses: actions/checkout@v4
 
+      - name: Download Variables File
+        uses: actions/download-artifact@v4
+        with:
+          name: variables
+          path: .
+
+      - name: Prepare Variables File
+        run: |
+          New-Item -ItemType Directory -Force -Path "indra/build_secrets" | Out-Null
+          Copy-Item "variables" "indra/build_secrets/variables"
+        shell: pwsh
+
+      - name: Install Autobuild
+        run: |
+          pip install autobuild
+
+      - name: Configure Firestorm Windows
+        run: |
+          autobuild configure -A 64 -c ReleaseFS_open --platform windows
+
+      - name: Build Firestorm
+        run: |
+          autobuild build -A 64 -c ReleaseFS_open --no-configure --verbose
