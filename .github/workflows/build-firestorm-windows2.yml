@@ -1,0 +1,74 @@
+name: Build Firestorm Windows (no package)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch_or_tag:
+        description: 'Branch or tag to build (例: 7.2.0_preview / Firestorm_7.1.13)'
+        required: true
+        default: '7.2.0_preview'
+
+jobs:
+  build:
+    runs-on: windows-2022  # VS2022搭載ランナー
+
+    steps:
+      - name: Checkout phoenix-firestorm
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.inputs.branch_or_tag }}
+
+      # 多少の空き確保（Windowsランナーは掃除の自由度が低い）
+      - name: Show disk space
+        shell: pwsh
+        run: Get-PSDrive
+
+      - name: Install Python & pip upgrade
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Clone fs-build-variables
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\src" | Out-Null
+          cd "$env:USERPROFILE\src"
+          git clone https://github.com/FirestormViewer/fs-build-variables.git
+
+      - name: Install Autobuild (from requirements.txt)
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements.txt
+          autobuild --version
+
+      # 重要：AUTOBUILD_VARIABLES_FILE を設定
+      - name: Set AUTOBUILD_VARIABLES_FILE
+        shell: pwsh
+        run: echo "AUTOBUILD_VARIABLES_FILE=$env:USERPROFILE\src\fs-build-variables\variables" >> $env:GITHUB_ENV
+
+      # VS 環境は windows-2022 ランナーが既に用意済み（MSVC/SDK入り）
+      # まずはパッケージOFF＋テストOFFで容量と時間を抑える
+      - name: Configure (no package)
+        shell: pwsh
+        run: autobuild configure -A 64 -c ReleaseFS_open -- -DLL_TESTS:BOOL=FALSE -DPACKAGE:BOOL=Off
+
+      - name: Build
+        shell: pwsh
+        run: autobuild build -A 64 -c ReleaseFS_open
+
+      # 出力ディレクトリは VC ツールセットにより異なるのでワイルドカードで拾う
+      - name: Find packaged dirs
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -Directory -Filter packaged | Select-Object -ExpandProperty FullName
+
+      - name: Upload unpackaged viewer
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestorm-windows-unpackaged
+          path: |
+            build-vc*\newview\packaged
+            build-vc*-64\newview\packaged
