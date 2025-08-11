@@ -1,36 +1,47 @@
-name: Test Firestorm Windows Configure
+name: Build Firestorm Windows
 
 on:
   workflow_dispatch:
     inputs:
-      branch_or_tag:
-        description: 'Branch or tag to test (例: 7.2.0_preview / Firestorm_7.1.13)'
+      branch:
+        description: 'Branch or tag to build (例: 7.2.0_preview / Firestorm_7.1.13)'
         required: true
         default: '7.2.0_preview'
+      create_package:
+        description: 'Create installer/package? (容量・時間が増大します)'
+        required: true
+        default: 'false'
 
 jobs:
-  test-configure:
+  build:
     runs-on: windows-latest
+
     steps:
-      - name: Checkout Firestorm
-        uses: actions/checkout@v4
-        with:
-          repository: ebamolter/phoenix-firestorm
-          ref: ${{ github.event.inputs.branch_or_tag }}
-          submodules: recursive
+    - name: Checkout Firestorm
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ github.event.inputs.branch }}
+        submodules: recursive
 
-      - name: Install dependencies
-        run: |
-          choco install yasm nsis python --yes
-          pip install autobuild
+    - name: Install Autobuild
+      run: |
+        pip install autobuild
 
-      - name: Install VLC SDK (必要な場合)
-        run: |
-          curl -L https://download.videolan.org/pub/videolan/vlc/3.0.20/win64/vlc-3.0.20-win64.7z -o vlc.7z
-          7z x vlc.7z -o"${{ github.workspace }}\vlc"
-          echo "VLC_PLUGIN_PATH=${{ github.workspace }}\vlc\plugins" >> $env:GITHUB_ENV
-          echo "VLC_SDK_PATH=${{ github.workspace }}\vlc" >> $env:GITHUB_ENV
+    - name: Prepare Variables File
+      run: |
+        # Linuxビルド時に使ったvariablesファイルをArtifactから取得
+        # または手動で同ディレクトリに置く
+        echo "AUTOBUILD_VARIABLES_FILE=${{ github.workspace }}\\indra\\build_secrets\\variables" >> $env:GITHUB_ENV
 
-      - name: Test configure step
-        run: |
-          autobuild configure -A 64 -c ReleaseFS_open --verbose
+    - name: Configure Firestorm
+      run: autobuild configure -A 64 -c ReleaseFS_open -- -platform windows
+
+    - name: Build Firestorm
+      run: autobuild build -A 64 -c ReleaseFS_open -- -platform windows
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: firestorm-windows
+        path: build-vc*/newview/Release/*
+
