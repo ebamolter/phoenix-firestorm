@@ -1,0 +1,36 @@
+name: Test Firestorm Windows Configure
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch_or_tag:
+        description: 'Branch or tag to test (例: 7.2.0_preview / Firestorm_7.1.13)'
+        required: true
+        default: '7.2.0_preview'
+
+jobs:
+  test-configure:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Firestorm
+        uses: actions/checkout@v4
+        with:
+          repository: ebamolter/phoenix-firestorm
+          ref: ${{ github.event.inputs.branch_or_tag }}
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          choco install yasm nsis python --yes
+          pip install autobuild
+
+      - name: Install VLC SDK (必要な場合)
+        run: |
+          curl -L https://download.videolan.org/pub/videolan/vlc/3.0.20/win64/vlc-3.0.20-win64.7z -o vlc.7z
+          7z x vlc.7z -o"${{ github.workspace }}\vlc"
+          echo "VLC_PLUGIN_PATH=${{ github.workspace }}\vlc\plugins" >> $env:GITHUB_ENV
+          echo "VLC_SDK_PATH=${{ github.workspace }}\vlc" >> $env:GITHUB_ENV
+
+      - name: Test configure step
+        run: |
+          autobuild configure -A 64 -c ReleaseFS_open --verbose
