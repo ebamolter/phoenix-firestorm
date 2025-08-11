@@ -40,7 +40,7 @@ jobs:
       run: autobuild build -A 64 -c ReleaseFS_open -- -platform windows
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: firestorm-windows
         path: build-vc*/newview/Release/*
