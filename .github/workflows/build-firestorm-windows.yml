@@ -24,18 +24,28 @@ jobs:
           ref: ${{ github.event.inputs.branch_or_tag }}
           fetch-depth: 1
 
-      # Windowsの長いパスでの失敗を避ける
       - name: Enable Git long paths
         run: git config --system core.longpaths true
         shell: bash
 
-      # VS2022の開発者コマンドを有効化（x64）
+      # 追加：fs-build-variables を取得（Windowsでも必要だった）
+      - name: Clone fs-build-variables
+        shell: bash
+        run: |
+          mkdir -p "$HOME/src"
+          cd "$HOME/src"
+          git clone https://github.com/FirestormViewer/fs-build-variables.git
+
+      # 追加：AUTOBUILD_VARIABLES_FILE を全ステップに反映
+      - name: Set AUTOBUILD_VARIABLES_FILE
+        shell: bash
+        run: echo "AUTOBUILD_VARIABLES_FILE=$HOME/src/fs-build-variables/variables" >> "$GITHUB_ENV"
+
       - name: Setup MSVC dev cmd
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      # Python + autobuild（公式のpip導入）
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -46,27 +56,22 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install autobuild
 
-      # Configure（ReleaseFS_open / 64bit）
       - name: Configure Firestorm
         shell: cmd
         run: |
           autobuild configure -A 64 -c ReleaseFS_open
 
-      # Build（余計なMSBuildスイッチは付けない）
       - name: Build Firestorm
         shell: cmd
         run: |
           autobuild build -A 64 -c ReleaseFS_open --no-configure
 
-      # Packageは任意（容量と時間が大きいので初回はfalseを推奨）
       - name: Package Firestorm (optional)
         if: ${{ github.event.inputs.do_package == 'true' }}
         shell: cmd
         run: |
           autobuild package -A 64 -c ReleaseFS_open
 
-      # 成果物アップロード
-      # パッケージありなら packaged/、無ければ ReleaseFS_open/ を拾う
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
