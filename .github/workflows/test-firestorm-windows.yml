@@ -13,46 +13,78 @@ on:
         default: 'false'
 
 jobs:
-  build:
-    runs-on: windows-latest
-
+  build-linux:
+    runs-on: ubuntu-22.04
     steps:
-      - name: Checkout Firestorm
+      - name: Checkout source
         uses: actions/checkout@v4
         with:
+          repository: FirestormViewer/phoenix-firestorm
           ref: ${{ github.event.inputs.branch }}
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y python3 python3-pip build-essential cmake ninja-build \
+            libgl1-mesa-dev libglu1-mesa-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev uuid-dev libssl-dev libxml2-dev \
+            libpng-dev libjpeg-dev libtiff-dev libbz2-dev libapr1-dev \
+            libaprutil1-dev libgoogle-perftools-dev
+
+      - name: Prepare variables file
+        run: |
+          mkdir -p indra/build_secrets
+          echo "AUTOBUILD_VARIABLES_CONTENT" > indra/build_secrets/variables
+
+      - name: Upload variables file
+        uses: actions/upload-artifact@v4
         with:
-          python-version: '3.10'
+          name: variables
+          path: indra/build_secrets/variables
 
-      - name: Setup Visual Studio
-        uses: microsoft/setup-msbuild@v2
+  build-windows:
+    needs: build-linux
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          repository: FirestormViewer/phoenix-firestorm
+          ref: ${{ github.event.inputs.branch }}
 
-      - name: Install autobuild
+      - name: Download variables file
+        uses: actions/download-artifact@v4
+        with:
+          name: variables
+          path: indra/build_secrets
+
+      - name: Verify variables file
+        run: dir indra\build_secrets
+
+      - name: Install dependencies
+        shell: pwsh
         run: |
-          python -m pip install autobuild
+          choco install git cmake python --yes
+          refreshenv
 
-      - name: Prepare Variables File
+      - name: Configure build
+        shell: bash
         run: |
-          echo "AUTOBUILD_VARIABLES_FILE=indra/build_secrets/variables" >> $env:GITHUB_ENV
+          autobuild configure -c ReleaseFS_open
 
-      - name: Configure Firestorm
+      - name: Build
+        shell: bash
         run: |
-          autobuild configure -A 64 -c ReleaseFS_open --platform windows
-
-      - name: Build Firestorm
-        run: |
-          autobuild build -A 64 -c ReleaseFS_open --no-configure --platform windows
+          autobuild build -c ReleaseFS_open -A 64 --no-configure
 
       - name: Package (optional)
         if: ${{ github.event.inputs.create_package == 'true' }}
+        shell: bash
         run: |
-          autobuild package -A 64 -c ReleaseFS_open --platform windows
+          autobuild package -c ReleaseFS_open
 
-      - name: Upload artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: firestorm-windows
-          path: build-vc*/newview/Release/*.exe
+          name: firestorm-windows-build
+          path: build-vc*/*
