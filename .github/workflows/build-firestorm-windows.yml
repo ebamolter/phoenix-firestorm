@@ -8,7 +8,7 @@ on:
         required: true
         default: '7.2.0_preview'
       do_package:
-        description: 'Create installer/package? (容量・時間が増大します)'
+        description: 'Create installer/package? (容量・時間が増える)'
         required: true
         default: 'false'
 
@@ -25,21 +25,30 @@ jobs:
           fetch-depth: 1
 
       - name: Enable Git long paths
+        shell: pwsh
         run: git config --system core.longpaths true
-        shell: bash
 
-      # 追加：fs-build-variables を取得（Windowsでも必要だった）
+      # fs-build-variables の取得
       - name: Clone fs-build-variables
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p "$HOME/src"
-          cd "$HOME/src"
-          git clone https://github.com/FirestormViewer/fs-build-variables.git
+          $srcDir = "$env:USERPROFILE\src"
+          New-Item -ItemType Directory -Path $srcDir -Force | Out-Null
+          if (-not (Test-Path "$srcDir\fs-build-variables")) {
+            git clone https://github.com/FirestormViewer/fs-build-variables.git "$srcDir\fs-build-variables"
+          }
 
-      # 追加：AUTOBUILD_VARIABLES_FILE を全ステップに反映
-      - name: Set AUTOBUILD_VARIABLES_FILE
-        shell: bash
-        run: echo "AUTOBUILD_VARIABLES_FILE=$HOME/src/fs-build-variables/variables" >> "$GITHUB_ENV"
+      # Windows用とbash用のパス両方をセット
+      - name: Set AUTOBUILD_VARIABLES_FILE for cmd/pwsh and bash
+        shell: pwsh
+        run: |
+          $winPath = Join-Path $env:USERPROFILE 'src\fs-build-variables\variables'
+          if (!(Test-Path $winPath)) { throw "variables file not found: $winPath" }
+          # Windows形式
+          "AUTOBUILD_VARIABLES_FILE=$winPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # bash形式
+          $bashPath = '/' + ($winPath -replace '\\','/' -replace ':','')
+          "AUTOBUILD_VARIABLES_FILE_BASH=$bashPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup MSVC dev cmd
         uses: ilammy/msvc-dev-cmd@v1
@@ -52,13 +61,17 @@ jobs:
           python-version: '3.x'
 
       - name: Install Autobuild
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           python -m pip install autobuild
+          autobuild --version
 
       - name: Configure Firestorm
         shell: cmd
         run: |
+          echo AUTOBUILD_VARIABLES_FILE=%AUTOBUILD_VARIABLES_FILE%
+          echo AUTOBUILD_VARIABLES_FILE_BASH=%AUTOBUILD_VARIABLES_FILE_BASH%
           autobuild configure -A 64 -c ReleaseFS_open
 
       - name: Build Firestorm
