@@ -32,6 +32,14 @@ jobs:
           choco install -y sevenzip git cmake python3
           pip install autobuild
 
+      # 🔹 追加: variables.txt を公式リポジトリから取得
+      - name: Download variables.txt
+        shell: pwsh
+        run: |
+          $url = "https://raw.githubusercontent.com/FirestormViewer/fs-build-variables/38e0e2c27dac75af6701f47eae95f583eac53613/variables"
+          $dst = "$env:GITHUB_WORKSPACE\\variables.txt"
+          Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
+
       - name: Convert variables.txt for Windows
         shell: pwsh
         run: |
