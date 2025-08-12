@@ -32,7 +32,6 @@ jobs:
           choco install -y sevenzip git cmake python3
           pip install autobuild
 
-      # 公式 variables を取得して AUTOBUILD_VARIABLES_FILE を設定
       - name: Download variables.txt
         shell: pwsh
         run: |
@@ -42,16 +41,30 @@ jobs:
           echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
-      - name: Resolve configure_firestorm.sh absolute path
+      - name: Ensure configure_firestorm.sh in indra/scripts
         shell: pwsh
         run: |
-          $cfg = Join-Path $env:GITHUB_WORKSPACE "scripts\configure_firestorm.sh"
-          if (!(Test-Path $cfg)) {
-            Write-Error "scripts\configure_firestorm.sh が見つかりません。リポジトリを確認してください。"
+          $srcPaths = @(
+            (Join-Path -Path $env:GITHUB_WORKSPACE -ChildPath 'scripts\configure_firestorm.sh'),
+            (Join-Path -Path $env:GITHUB_WORKSPACE -ChildPath 'phoenix-firestorm\scripts\configure_firestorm.sh')
+          )
+          $dst = Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'
+          New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+          $found = $false
+          foreach ($src in $srcPaths) {
+            if (Test-Path $src) {
+              Copy-Item $src $dst -Force
+              Write-Host "configure_firestorm.sh copied from $src to $dst"
+              $found = $true
+              break
+            }
           }
-          # Git Bash で直接実行されるので実行権限は一応付与
-          & "C:\Program Files\Git\bin\bash.exe" -lc "chmod +x '${cfg.Replace('\','/')}' || true"
-          echo "CONFIG_SCRIPT=$cfg" >> $env:GITHUB_ENV
+          if (-not $found) {
+            $raw = 'https://raw.githubusercontent.com/FirestormViewer/phoenix-firestorm/master/scripts/configure_firestorm.sh'
+            Invoke-WebRequest -Uri $raw -OutFile $dst -UseBasicParsing
+            Write-Host "configure_firestorm.sh fetched from remote"
+          }
+          & 'C:\Program Files\Git\bin\bash.exe' -lc "chmod +x 'indra/scripts/configure_firestorm.sh' || true"
 
       - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
@@ -63,43 +76,49 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           $fname = "$dst\$(Split-Path $url -Leaf)"
           Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
+
           if ($fname.ToLower().EndsWith(".7z")) {
             & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
           } else {
             Expand-Archive -Path $fname -DestinationPath $zip -Force
           }
+
           $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             Test-Path (Join-Path $_.FullName "vlc\vlc.h")
           } | Select-Object -First 1
+
           $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
           } | Select-Object -First 1
+
           $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0
           } | Select-Object -First 1
+
           if ($inc -and $libdir) {
             echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
             echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
+            echo "LIBVLC_DETECTED=1" >> $env:GITHUB_ENV
+          } else {
+            echo "LIBVLC_DETECTED=0" >> $env:GITHUB_ENV
           }
           if ($dlldir) { echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV }
 
-      - name: Configure (with/without LibVLC) using absolute --config-script
+      - name: Configure (with/without LibVLC)
         shell: pwsh
+        working-directory: ./indra
         run: |
-          $cfg = $env:CONFIG_SCRIPT
-          if ($env:LIBVLC_INCLUDE_DIR -and $env:LIBVLC_LIB_DIR) {
+          if ($env:LIBVLC_DETECTED -ne "0") {
             autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
-              --config-script="$cfg" `
               --with-libvlc-includes="$env:LIBVLC_INCLUDE_DIR" `
               --with-libvlc-libs="$env:LIBVLC_LIB_DIR" `
               -- -DPACKAGE:BOOL=Off
           } else {
-            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
-              --config-script="$cfg" `
-              -- -DPACKAGE:BOOL=Off
+            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- -DPACKAGE:BOOL=Off
           }
 
       - name: Build
+        working-directory: ./indra
         run: autobuild build -c ReleaseFS_open -A 64 --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
 
       - name: Upload unpackaged viewer
