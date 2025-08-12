@@ -4,17 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       branch_or_tag:
-        description: 'Build target branch or tag (例: master または Firestorm_7.1.13)'
+        description: 'Build target branch or tag'
         required: true
-        default: 'master'
-      enable_libvlc:
-        description: "Enable LibVLC support"
-        required: true
-        default: "true"
-      libvlc_sdk_url:
-        description: "URL of LibVLC SDK (7z/zip)"
-        required: true
-        default: "https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z"
+        default: '7.2.0_preview'  # ← ここを修正
 
 jobs:
   build:
@@ -26,14 +18,19 @@ jobs:
         with:
           ref: ${{ github.event.inputs.branch_or_tag }}
 
-      - name: Install 7zip
-        run: choco install 7zip --no-progress -y
+      - name: Install 7zip and autobuild
+        run: |
+          choco install 7zip --no-progress -y
+          curl -L https://downloads.secondlife.com/hg/autobuild/autobuild-windows.zip -o autobuild.zip
+          mkdir C:\autobuild
+          tar -xf autobuild.zip -C C:\autobuild
+          echo "C:\autobuild" >> $GITHUB_PATH
+        shell: pwsh
 
       - name: Download and Extract LibVLC
-        if: ${{ github.event.inputs.enable_libvlc == 'true' }}
         run: |
           mkdir _temp
-          curl -L "${{ github.event.inputs.libvlc_sdk_url }}" -o _temp/libvlc.7z
+          curl -L "https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z" -o _temp/libvlc.7z
           mkdir _temp/libvlc_pkg
           7z x _temp/libvlc.7z -o_temp/libvlc_pkg
         shell: pwsh
@@ -43,28 +40,34 @@ jobs:
           echo "LIBVLC_INCLUDE_DIR=${{ github.workspace }}/_temp/libvlc_pkg/vlc-3.0.9.2/sdk/include" >> $GITHUB_ENV
           echo "LIBVLC_LIB_DIR=${{ github.workspace }}/_temp/libvlc_pkg/vlc-3.0.9.2/sdk/lib" >> $GITHUB_ENV
           echo "LL_BUILD=windows" >> $GITHUB_ENV
+          echo "AUTOBUILD_VARIABLES_FILE=${{ github.workspace }}/autobuild.xml" >> $GITHUB_ENV
         shell: bash
 
-      - name: Configure with configure_firestorm.sh
+      - name: Configure Firestorm
         working-directory: ${{ github.workspace }}
         shell: bash
         run: |
           set -x
-          if [[ "${{ github.event.inputs.enable_libvlc }}" == "true" ]]; then
-            ./indra/scripts/configure_firestorm.sh --platform windows -- -A x64 \
-              -DLL_TESTS:BOOL=FALSE \
-              -DPACKAGE:BOOL=Off \
-              -DMEDIAPLUGIN_LIBVLC:BOOL=ON \
-              -DUSE_VLC:BOOL=ON \
-              "-DLibVLC_INCLUDE_DIR=$LIBVLC_INCLUDE_DIR" \
-              "-DLibVLC_LIBRARY=$LIBVLC_LIB_DIR/libvlc.lib" \
-              "-DLibVLC_CORE_LIBRARY=$LIBVLC_LIB_DIR/libvlccore.lib"
+          if [[ -f "./indra/scripts/configure_firestorm.sh" ]]; then
+            if [[ -n "$LIBVLC_INCLUDE_DIR" ]]; then
+              ./indra/scripts/configure_firestorm.sh --platform windows -- -A x64 \
+                -DLL_TESTS:BOOL=FALSE \
+                -DPACKAGE:BOOL=Off \
+                -DMEDIAPLUGIN_LIBVLC:BOOL=ON \
+                -DUSE_VLC:BOOL=ON \
+                "-DLibVLC_INCLUDE_DIR=$LIBVLC_INCLUDE_DIR" \
+                "-DLibVLC_LIBRARY=$LIBVLC_LIB_DIR/libvlc.lib" \
+                "-DLibVLC_CORE_LIBRARY=$LIBVLC_LIB_DIR/libvlccore.lib"
+            else
+              ./indra/scripts/configure_firestorm.sh --platform windows -- -A x64 \
+                -DLL_TESTS:BOOL=FALSE \
+                -DPACKAGE:BOOL=Off \
+                -DMEDIAPLUGIN_LIBVLC:BOOL=OFF \
+                -DUSE_VLC:BOOL=OFF
+            fi
           else
-            ./indra/scripts/configure_firestorm.sh --platform windows -- -A x64 \
-              -DLL_TESTS:BOOL=FALSE \
-              -DPACKAGE:BOOL=Off \
-              -DMEDIAPLUGIN_LIBVLC:BOOL=OFF \
-              -DUSE_VLC:BOOL=OFF
+            echo "❌ configure_firestorm.sh not found"
+            exit 1
           fi
 
       - name: Check Firestorm.sln
@@ -73,7 +76,7 @@ jobs:
           if (Test-Path "build-vc170-64\Firestorm.sln") {
             Write-Output "✅ Firestorm.sln found."
           } else {
-            Write-Output "❌ Firestorm.sln NOT found, generating with cmake (source = indra)..."
+            Write-Output "❌ Firestorm.sln NOT found, generating with cmake..."
             cmake -S "${{ github.workspace }}/indra" -B "${{ github.workspace }}/build-vc170-64" -G "Visual Studio 17 2022" -A x64
           }
 
