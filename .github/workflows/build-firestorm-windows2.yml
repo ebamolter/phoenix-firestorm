@@ -32,9 +32,15 @@ jobs:
           choco install -y sevenzip git cmake python3
           pip install autobuild
 
-      - name: Set AUTOBUILD_VARIABLES_FILE
+      # 公式 variables を取得して AUTOBUILD_VARIABLES_FILE を設定
+      - name: Download variables.txt
+        shell: pwsh
         run: |
-          echo "AUTOBUILD_VARIABLES_FILE=$env:GITHUB_WORKSPACE\autobuild.xml" >> $env:GITHUB_ENV
+          $url = "https://raw.githubusercontent.com/FirestormViewer/fs-build-variables/38e0e2c27dac75af6701f47eae95f583eac53613/variables"
+          $dst = "$env:RUNNER_TEMP\variables"
+          Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
+          echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
+          echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
       - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
@@ -46,40 +52,36 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           $fname = "$dst\$(Split-Path $url -Leaf)"
           Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
-
           if ($fname.ToLower().EndsWith(".7z")) {
-            $sevenZip = "C:\Program Files\7-Zip\7z.exe"
-            & "$sevenZip" x $fname "-o$zip" -y | Out-Null
+            & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
           } else {
             Expand-Archive -Path $fname -DestinationPath $zip -Force
           }
-
           $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             Test-Path (Join-Path $_.FullName "vlc\vlc.h")
           } | Select-Object -First 1
-
           $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
           } | Select-Object -First 1
-
           $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0
           } | Select-Object -First 1
-
           if ($inc -and $libdir) {
             echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
             echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
-          } else {
-            echo "LIBVLC_DETECTED=0" >> $env:GITHUB_ENV
           }
           if ($dlldir) { echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV }
 
-      - name: Configure (with/without LibVLC)
+      - name: Configure (with/without LibVLC) – run from repo root
+        shell: pwsh
         run: |
-          if ($env:LIBVLC_DETECTED -ne "0") {
-            autobuild configure --platform windows -- --with-libvlc-includes="$env:LIBVLC_INCLUDE_DIR" --with-libvlc-libs="$env:LIBVLC_LIB_DIR"
+          if ($env:LIBVLC_INCLUDE_DIR -and $env:LIBVLC_LIB_DIR) {
+            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
+              --with-libvlc-includes="$env:LIBVLC_INCLUDE_DIR" `
+              --with-libvlc-libs="$env:LIBVLC_LIB_DIR" `
+              -- -DPACKAGE:BOOL=Off
           } else {
-            autobuild configure --platform windows
+            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- -DPACKAGE:BOOL=Off
           }
 
       - name: Build
@@ -89,4 +91,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: firestorm-unpackaged
-          path: build-vc170-64/newview/Release
+          path: indra/build-vc170-64/newview/Release
