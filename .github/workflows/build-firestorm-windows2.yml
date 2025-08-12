@@ -1,4 +1,4 @@
-name: Build Firestorm Windows (With LibVLC)
+name: Build Firestorm Windows (No Package)
 
 on:
   workflow_dispatch:
@@ -8,67 +8,88 @@ on:
         required: true
         default: 'master'
       enable_libvlc:
-        description: 'Enable LibVLC support'
+        description: "Enable LibVLC support"
         required: true
-        default: 'true'
+        default: "true"
       libvlc_sdk_url:
-        description: 'URL of LibVLC SDK (7z/zip)'
+        description: "URL of LibVLC SDK (7z/zip)"
         required: true
-        default: 'https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z'
+        default: "https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z"
 
 jobs:
   build:
     runs-on: windows-2022
 
-    env:
-      AUTOBUILD_BUILD_ID: ${{ github.run_id }}
-      LIBVLC_PACKAGE_DIR: ${{ runner.temp }}/libvlc_pkg
-      LIBVLC_SDK_DIR: ${{ runner.temp }}/libvlc_pkg/pkg/vlc-3.0.9.2
-      LIBVLC_INCLUDE_DIR: ${{ runner.temp }}/libvlc_pkg/pkg/vlc-3.0.9.2/sdk/include
-      LIBVLC_LIB_DIR: ${{ runner.temp }}/libvlc_pkg/pkg/vlc-3.0.9.2/sdk/lib
-
     steps:
-      - name: Checkout Firestorm
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           ref: ${{ github.event.inputs.branch_or_tag }}
+          submodules: recursive
 
-      - name: Install 7zip
-        uses: crazy-max/ghaction-chocolatey@v2
-        with:
-          args: install 7zip -y
+      - name: Install Autobuild
+        run: |
+          choco install -y sevenzip git cmake python3
+          pip install autobuild
 
-      - name: Extract LibVLC SDK
+      - name: Download variables.txt
+        shell: pwsh
+        run: |
+          $url = "https://raw.githubusercontent.com/FirestormViewer/fs-build-variables/38e0e2c27dac75af6701f47eae95f583eac53613/variables"
+          $dst = "$env:RUNNER_TEMP\variables"
+          Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
+          echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
+          echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
+
+      - name: Ensure configure_firestorm.sh is in indra/scripts
+        shell: pwsh
+        run: |
+          $sourcePath = Join-Path $env:GITHUB_WORKSPACE "scripts\configure_firestorm.sh"
+          $destPath = Join-Path $env:GITHUB_WORKSPACE "indra\scripts\configure_firestorm.sh"
+          if (!(Test-Path $destPath)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $destPath) | Out-Null
+            Copy-Item $sourcePath $destPath -Force
+          }
+          & "C:\Program Files\Git\bin\bash.exe" -lc "chmod +x '${destPath.Replace('\','/')}' || true"
+          echo "CONFIG_SCRIPT=$destPath" >> $env:GITHUB_ENV
+
+      - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
-        run: |
-          mkdir $env:LIBVLC_PACKAGE_DIR
-          Invoke-WebRequest "${{ github.event.inputs.libvlc_sdk_url }}" -OutFile "$env:LIBVLC_PACKAGE_DIR/libvlc.7z"
-          7z x "$env:LIBVLC_PACKAGE_DIR/libvlc.7z" -o"$env:LIBVLC_PACKAGE_DIR/pkg"
-
-      - name: Ensure configure_firestorm.sh is LF and UTF-8
         shell: pwsh
         run: |
-          $path = "indra/scripts/configure_firestorm.sh"
-
-          if (!(Test-Path $path)) {
-            Write-Error "ファイルが存在しません: $path"
+          $url = "${{ github.event.inputs.libvlc_sdk_url }}"
+          $dst = "$env:RUNNER_TEMP\libvlc_pkg"
+          $zip = "$dst\pkg"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          $fname = "$dst\$(Split-Path $url -Leaf)"
+          Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
+          if ($fname.ToLower().EndsWith(".7z")) {
+            & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
+          } else {
+            Expand-Archive -Path $fname -DestinationPath $zip -Force
           }
+          $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
+            Test-Path (Join-Path $_.FullName "vlc\vlc.h")
+          } | Select-Object -First 1
+          $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
+            (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
+          } | Select-Object -First 1
+          $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
+            (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0
+          } | Select-Object -First 1
+          if ($inc -and $libdir) {
+            echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
+            echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
+          }
+          if ($dlldir) { echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV }
 
-          $content = Get-Content $path -Raw
-          $content = $content -replace "`r`n", "`n"
-          $content = $content -replace "`r", "`n"
-          [System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))
-
-      - name: Configure with/without LibVLC
+      - name: Configure (with/without LibVLC) using absolute path
         shell: pwsh
         run: |
-          $cfg = "indra/scripts/configure_firestorm.sh"
-
+          $cfg = $env:CONFIG_SCRIPT
           if (!(Test-Path $cfg)) {
-            Write-Error "パスが無効です: $cfg"
+            Write-Error "configure_firestorm.sh not found: $cfg"
           }
-
           if ($env:LIBVLC_INCLUDE_DIR -and $env:LIBVLC_LIB_DIR) {
             autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
               --config-script="$cfg" `
@@ -81,6 +102,12 @@ jobs:
               -- -DPACKAGE:BOOL=Off
           }
 
-      - name: Post Run actions/checkout@v4
-        run: echo "Complete"
+      - name: Build
+        working-directory: ./indra
+        run: autobuild build -c ReleaseFS_open -A 64 --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
 
+      - name: Upload unpackaged viewer
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestorm-unpackaged
+          path: indra/build-vc170-64/newview/Release
