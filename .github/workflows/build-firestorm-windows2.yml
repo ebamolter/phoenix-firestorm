@@ -71,16 +71,16 @@ jobs:
             Expand-Archive -Path $fname -DestinationPath $zip -Force
           }
 
-          $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            Test-Path (Join-Path $_.FullName "vlc\vlc.h")
+          $inc = Get-ChildItem -Recurse -Path $zip | Where-Object {
+            $_.PSIsContainer -and (Test-Path (Join-Path $_.FullName "vlc\vlc.h"))
           } | Select-Object -First 1
 
-          $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            Test-Path (Join-Path $_.FullName "libvlc.lib") -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
+          $libdir = Get-ChildItem -Recurse -Path $zip | Where-Object {
+            $_.PSIsContainer -and (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
           } | Select-Object -First 1
 
-          $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0
+          $dlldir = Get-ChildItem -Recurse -Path $zip | Where-Object {
+            $_.PSIsContainer -and ((Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0)
           } | Select-Object -First 1
 
           if ($inc -and $libdir) {
@@ -97,6 +97,7 @@ jobs:
       - name: Configure with configure_firestorm.sh
         shell: bash
         run: |
+          set -x
           if [[ "$LIBVLC_DETECTED" != "0" ]]; then
             ./indra/scripts/configure_firestorm.sh -A 64 -c ReleaseFS_open -- \
               -DLL_TESTS:BOOL=FALSE \
@@ -112,16 +113,23 @@ jobs:
               -DPACKAGE:BOOL=Off \
               -DMEDIAPLUGIN_LIBVLC:BOOL=OFF \
               -DUSE_VLC:BOOL=OFF
+          fi
 
-      - name: Ensure Firestorm.sln exists
+      - name: Check for Firestorm.sln
+        shell: pwsh
+        run: |
+          if (Test-Path "build-vc170-64\Firestorm.sln") {
+            Write-Output "✅ Firestorm.sln found."
+          } else {
+            Write-Output "❌ Firestorm.sln NOT found, attempting manual cmake generation..."
+            cmake -S . -B build-vc170-64 -G "Visual Studio 17 2022" -A x64
+          }
+
+      - name: List .sln file for confirmation
         shell: bash
         run: |
-          if [ ! -f build-vc170-64/Firestorm.sln ]; then
-            echo "Firestorm.sln not found, regenerating with cmake..."
-            cmake -S . -B build-vc170-64 -G "Visual Studio 17 2022" -A x64
-          else
-            echo "Firestorm.sln found."
-          fi
+          echo "Listing .sln files:"
+          find build-vc*-64 -name "*.sln" || echo "❌ No .sln file found."
 
       - name: Build
         shell: pwsh
