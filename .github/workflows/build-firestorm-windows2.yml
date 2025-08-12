@@ -114,15 +114,6 @@ jobs:
               -DUSE_VLC:BOOL=OFF
           fi
 
-      - name: Generate Firestorm.sln manually (if missing)
-        shell: pwsh
-        run: |
-          $sln = Get-ChildItem -Recurse -Filter "Firestorm.sln" -ErrorAction SilentlyContinue
-          if (-not $sln) {
-            Write-Host "Firestorm.sln not found. Attempting CMake regeneration..."
-            cmake -S . -B build-vc170-64 -A x64
-          }
-
       - name: Build
         shell: pwsh
         run: autobuild build -A 64 -c ReleaseFS_open --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
