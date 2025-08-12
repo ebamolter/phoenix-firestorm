@@ -1,4 +1,4 @@
-name: Build Firestorm Windows2 (LibVLC from 7z/zip)
+name: Build Firestorm Windows (LibVLC, no package)
 
 on:
   workflow_dispatch:
