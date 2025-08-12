@@ -32,25 +32,15 @@ jobs:
           choco install -y sevenzip git cmake python3
           pip install autobuild
 
-      # 🔹 追加: variables.txt を公式リポジトリから取得
+      # 公式 variables を取得して“そのまま”使う（変換しない）
       - name: Download variables.txt
         shell: pwsh
         run: |
           $url = "https://raw.githubusercontent.com/FirestormViewer/fs-build-variables/38e0e2c27dac75af6701f47eae95f583eac53613/variables"
-          $dst = "$env:GITHUB_WORKSPACE\\variables.txt"
+          $dst = "$env:RUNNER_TEMP\variables"
           Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
-
-      - name: Convert variables.txt for Windows
-        shell: pwsh
-        run: |
-          $src = "$env:GITHUB_WORKSPACE\\variables.txt"
-          $dst = "$env:RUNNER_TEMP\\variables_win.txt"
-          Get-Content $src | ForEach-Object {
-            if ($_ -match '^\s*#') { return } # コメント行スキップ
-            if ($_ -match '^\s*$') { return } # 空行スキップ
-            $_ -replace 'export\s+', '' -replace '"', '' -replace '=', ' ' | Out-File -Append -FilePath $dst
-          }
           echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
+          echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
       - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
@@ -91,11 +81,15 @@ jobs:
           if ($dlldir) { echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV }
 
       - name: Configure (with/without LibVLC)
+        shell: pwsh
         run: |
           if ($env:LIBVLC_DETECTED -ne "0") {
-            autobuild configure --platform windows -- --with-libvlc-includes="$env:LIBVLC_INCLUDE_DIR" --with-libvlc-libs="$env:LIBVLC_LIB_DIR"
+            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
+              --with-libvlc-includes="$env:LIBVLC_INCLUDE_DIR" `
+              --with-libvlc-libs="$env:LIBVLC_LIB_DIR" `
+              -- -DPACKAGE:BOOL=Off
           } else {
-            autobuild configure --platform windows
+            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- -DPACKAGE:BOOL=Off
           }
 
       - name: Build
