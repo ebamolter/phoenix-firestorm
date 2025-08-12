@@ -73,15 +73,15 @@ jobs:
 
           $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             Test-Path (Join-Path $_.FullName "vlc\vlc.h")
-          } | Select-Object -First 1
+          }
 
           $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            Test-Path (Join-Path $_.FullName "libvlc.lib") -and Test-Path (Join-Path $_.FullName "libvlccore.lib")
-          } | Select-Object -First 1
+            (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
+          }
 
           $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0
-          } | Select-Object -First 1
+          }
 
           if ($inc -and $libdir) {
             echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
@@ -94,20 +94,9 @@ jobs:
             echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV
           }
 
-      - name: Debug Source Structure
-        shell: bash
-        run: |
-          echo "===== [Root Dir] ====="
-          ls -alh
-          echo "===== [indra Dir] ====="
-          ls -alh ./indra
-          echo "===== [indra/scripts] ====="
-          ls -alh ./indra/scripts
-
       - name: Configure with configure_firestorm.sh
         shell: bash
         run: |
-          set -x
           if [[ "$LIBVLC_DETECTED" != "0" ]]; then
             ./indra/scripts/configure_firestorm.sh -A 64 -c ReleaseFS_open -- \
               -DLL_TESTS:BOOL=FALSE \
