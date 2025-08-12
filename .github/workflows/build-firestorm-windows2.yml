@@ -32,7 +32,6 @@ jobs:
           choco install -y sevenzip git cmake python3
           pip install autobuild
 
-      # 公式 variables をそのまま使う
       - name: Download variables.txt
         shell: pwsh
         run: |
@@ -42,18 +41,17 @@ jobs:
           echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
-      # configure_firestorm.sh の存在を保証（コピーして確実に参照可能にする）
       - name: Ensure configure_firestorm.sh in expected location
         shell: pwsh
         run: |
           $possiblePaths = @(
-            Join-Path $env:GITHUB_WORKSPACE "scripts\configure_firestorm.sh",
-            Join-Path $env:GITHUB_WORKSPACE "phoenix-firestorm\scripts\configure_firestorm.sh"
+            (Join-Path -Path $env:GITHUB_WORKSPACE -ChildPath 'scripts\configure_firestorm.sh'),
+            (Join-Path -Path $env:GITHUB_WORKSPACE -ChildPath 'phoenix-firestorm\scripts\configure_firestorm.sh')
           )
           $found = $false
           foreach ($path in $possiblePaths) {
             if (Test-Path $path) {
-              $dst = Join-Path $env:GITHUB_WORKSPACE "indra\scripts\configure_firestorm.sh"
+              $dst = Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'
               New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
               Copy-Item $path $dst -Force
               Write-Host "configure_firestorm.sh found at $path and copied to $dst"
@@ -62,15 +60,14 @@ jobs:
             }
           }
           if (-not $found) {
-            Write-Host "configure_firestorm.sh not found locally. Fetching from remote..."
-            $dst = Join-Path $env:GITHUB_WORKSPACE "indra\scripts\configure_firestorm.sh"
+            Write-Host 'configure_firestorm.sh not found locally. Fetching from remote...'
+            $dst = Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'
             New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
-            $raw = "https://raw.githubusercontent.com/FirestormViewer/phoenix-firestorm/master/scripts/configure_firestorm.sh"
+            $raw = 'https://raw.githubusercontent.com/FirestormViewer/phoenix-firestorm/master/scripts/configure_firestorm.sh'
             Invoke-WebRequest -Uri $raw -OutFile $dst -UseBasicParsing
           }
-          & "C:\Program Files\Git\bin\bash.exe" -lc "chmod +x 'indra/scripts/configure_firestorm.sh' || true"
+          & 'C:\Program Files\Git\bin\bash.exe' -lc "chmod +x 'indra/scripts/configure_firestorm.sh' || true"
 
-      # ここで configure_firestorm.sh の有無を確認し、無ければ暫定で取得
       - name: Verify scripts/configure_firestorm.sh and patch if missing
         shell: pwsh
         run: |
