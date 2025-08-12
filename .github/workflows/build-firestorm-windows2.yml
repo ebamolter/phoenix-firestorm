@@ -32,9 +32,17 @@ jobs:
           choco install -y sevenzip git cmake python3
           pip install autobuild
 
-      - name: Set AUTOBUILD_VARIABLES_FILE
+      - name: Convert variables.txt for Windows
+        shell: pwsh
         run: |
-          echo "AUTOBUILD_VARIABLES_FILE=$env:GITHUB_WORKSPACE\autobuild.xml" >> $env:GITHUB_ENV
+          $src = "$env:GITHUB_WORKSPACE\\variables.txt"
+          $dst = "$env:RUNNER_TEMP\\variables_win.txt"
+          Get-Content $src | ForEach-Object {
+            if ($_ -match '^\s*#') { return } # コメント行スキップ
+            if ($_ -match '^\s*$') { return } # 空行スキップ
+            $_ -replace 'export\s+', '' -replace '"', '' -replace '=', ' ' | Out-File -Append -FilePath $dst
+          }
+          echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
 
       - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
