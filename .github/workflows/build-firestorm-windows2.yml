@@ -41,56 +41,17 @@ jobs:
           echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
-      - name: Ensure configure_firestorm.sh in all expected locations
+      - name: Ensure configure_firestorm.sh in indra/scripts
         shell: pwsh
         run: |
-          # ソース候補
-          $candidates = @(
-            (Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh'),
-            (Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'),
-            (Join-Path $env:GITHUB_WORKSPACE 'phoenix-firestorm\scripts\configure_firestorm.sh')
-          )
-          $src = $null
-          foreach ($c in $candidates) { if (Test-Path $c) { $src = $c; break } }
-          if (-not $src) {
-            $raw = 'https://raw.githubusercontent.com/FirestormViewer/phoenix-firestorm/master/scripts/configure_firestorm.sh'
-            $src = Join-Path $env:RUNNER_TEMP 'configure_firestorm.sh'
-            Invoke-WebRequest -Uri $raw -OutFile $src -UseBasicParsing
-            Write-Host "Fetched configure_firestorm.sh from remote."
+          $src = Join-Path $env:GITHUB_WORKSPACE "scripts\configure_firestorm.sh"
+          $dst = Join-Path $env:GITHUB_WORKSPACE "indra\scripts\configure_firestorm.sh"
+          if (!(Test-Path $src)) {
+            Write-Error "scripts/configure_firestorm.sh not found"
           }
-
-          # 配置先（事前に scripts フォルダを作成）
-          $destinations = @(
-            (Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh'),
-            (Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'),
-            (Join-Path $env:GITHUB_WORKSPACE 'indra\build-vc170-64\scripts\configure_firestorm.sh')
-          )
-          foreach ($dst in $destinations) {
-            $dir = Split-Path $dst
-            New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          }
-
-          # 自己コピー防止してコピー
-          $srcReal = (Resolve-Path $src).Path
-          foreach ($dst in $destinations) {
-            $dstReal = (Resolve-Path $dst -ErrorAction SilentlyContinue)?.Path
-            if ($dstReal -and ($srcReal -ieq $dstReal)) {
-              Write-Host "Skip copying to $dst (same as source)."
-            } else {
-              Copy-Item $src $dst -Force
-              Write-Host "Copied to $dst"
-            }
-          }
-
-          # 改行LF/UTF-8(no BOM) & 実行権限
-          foreach ($t in $destinations) {
-            if (Test-Path $t) {
-              $raw = Get-Content $t -Raw
-              $lf  = $raw -replace "`r`n","`n"
-              Set-Content -Path $t -Value $lf -NoNewline -Encoding utf8NoBOM
-            }
-          }
-          & 'C:\Program Files\Git\bin\bash.exe' -lc "chmod +x 'scripts/configure_firestorm.sh' 'indra/scripts/configure_firestorm.sh' 'indra/build-vc170-64/scripts/configure_firestorm.sh' || true"
+          New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+          Copy-Item $src $dst -Force
+          & "C:\Program Files\Git\bin\bash.exe" -lc "chmod +x 'indra/scripts/configure_firestorm.sh' || true"
 
       - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
@@ -102,37 +63,40 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           $fname = "$dst\$(Split-Path $url -Leaf)"
           Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
+
           if ($fname.ToLower().EndsWith(".7z")) {
             & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
           } else {
             Expand-Archive -Path $fname -DestinationPath $zip -Force
           }
-          $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { Test-Path (Join-Path $_.FullName "vlc\vlc.h") } | Select-Object -First 1
-          $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib")) } | Select-Object -First 1
-          $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0 } | Select-Object -First 1
+
+          $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
+            Test-Path (Join-Path $_.FullName "vlc\vlc.h")
+          } | Select-Object -First 1
+
+          $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
+            (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
+          } | Select-Object -First 1
+
+          $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
+            (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0
+          } | Select-Object -First 1
+
           if ($inc -and $libdir) {
             echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
             echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
-            echo "LIBVLC_DETECTED=1" >> $env:GITHUB_ENV
           } else {
             echo "LIBVLC_DETECTED=0" >> $env:GITHUB_ENV
           }
-          if ($dlldir) { echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV }
-
-      - name: Sanity check (non-fatal)
-        shell: bash
-        run: |
-          set +e
-          for d in "indra/newview" "indra/build-vc170-64/newview"; do
-            echo "== $d =="; (cd "$d" && pwd; ls -l ../scripts/configure_firestorm.sh || echo "NOT FOUND")
-          done
-          true
+          if ($dlldir) {
+            echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV
+          }
 
       - name: Configure (with/without LibVLC)
         shell: pwsh
         working-directory: ./indra
         run: |
-          if ($env:LIBVLC_DETECTED -ne "0") {
+          if ($env:LIBVLC_INCLUDE_DIR -and $env:LIBVLC_LIB_DIR) {
             autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
               --with-libvlc-includes="$env:LIBVLC_INCLUDE_DIR" `
               --with-libvlc-libs="$env:LIBVLC_LIB_DIR" `
