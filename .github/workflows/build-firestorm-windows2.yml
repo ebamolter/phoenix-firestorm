@@ -1,40 +1,19 @@
-- name: Fetch LibVLC SDK (7z/zip)
-  shell: pwsh
+- name: Configure with configure_firestorm.sh
+  shell: bash
   run: |
-    $url = "https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z"
-    $zip = "$env:RUNNER_TEMP\vlc-sdk.7z"
-    $out = "$env:RUNNER_TEMP\vlc-sdk"
-
-    Invoke-WebRequest -Uri $url -OutFile $zip
-
-    # Create output directory if it doesn't exist
-    if (!(Test-Path -Path $out)) {
-        New-Item -ItemType Directory -Path $out | Out-Null
-    }
-
-    7z x $zip -o"$out" | Out-Null
-
-    # Find include directory containing vlc.h
-    $inc = Get-ChildItem -Recurse -Path $out -Directory | Where-Object {
-        Test-Path (Join-Path $_.FullName "vlc\vlc.h")
-    } | Select-Object -First 1
-
-    # Find lib directory containing both libvlc.lib and libvlccore.lib
-    $libdir = Get-ChildItem -Recurse -Path $out -Directory | Where-Object {
-        Test-Path (Join-Path $_.FullName "libvlc.lib") -and Test-Path (Join-Path $_.FullName "libvlccore.lib")
-    } | Select-Object -First 1
-
-    # Find directory with libvlc.dll (DLLs)
-    $dlldir = Get-ChildItem -Recurse -Path $out -Directory | Where-Object {
-        (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0
-    } | Select-Object -First 1
-
-    # Output paths for debug
-    Write-Host "Include Path: $($inc.FullName)"
-    Write-Host "Library Path: $($libdir.FullName)"
-    Write-Host "DLL Path: $($dlldir.FullName)"
-
-    # Export paths as environment variables for later use
-    "VLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
-    "VLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
-    "VLC_DLL_DIR=$($dlldir.FullName)" >> $env:GITHUB_ENV
+    if [[ "$LIBVLC_DETECTED" != "0" ]]; then
+      ./indra/scripts/configure_firestorm.sh -A 64 -c ReleaseFS_open -- \
+        -DLL_TESTS:BOOL=FALSE \
+        -DPACKAGE:BOOL=Off \
+        -DMEDIAPLUGIN_LIBVLC:BOOL=ON \
+        -DUSE_VLC:BOOL=ON \
+        "-DLibVLC_INCLUDE_DIR=$LIBVLC_INCLUDE_DIR" \
+        "-DLibVLC_LIBRARY=$LIBVLC_LIB_DIR/libvlc.lib" \
+        "-DLibVLC_CORE_LIBRARY=$LIBVLC_LIB_DIR/libvlccore.lib"
+    else
+      ./indra/scripts/configure_firestorm.sh -A 64 -c ReleaseFS_open -- \
+        -DLL_TESTS:BOOL=FALSE \
+        -DPACKAGE:BOOL=Off \
+        -DMEDIAPLUGIN_LIBVLC:BOOL=OFF \
+        -DUSE_VLC:BOOL=OFF
+    fi
