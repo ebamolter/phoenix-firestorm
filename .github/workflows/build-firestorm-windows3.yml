@@ -47,6 +47,7 @@ jobs:
         run: |
           echo "AUTOBUILD_VARIABLES_FILE=$env:USERPROFILE/src/fs-build-variables/variables" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
+          echo "LL_BUILD=windows" >> $env:GITHUB_ENV
 
       - name: Install Autobuild And Requirements
         shell: pwsh
@@ -114,7 +115,7 @@ jobs:
         run: |
           set -x
           if [[ "$LIBVLC_DETECTED" != "0" ]]; then
-            ./indra/scripts/configure_firestorm.sh -A 64 -c ReleaseFS_open -- \
+            ./indra/scripts/configure_firestorm.sh --platform windows -A 64 -c ReleaseFS_open -- \
               -DLL_TESTS:BOOL=FALSE \
               -DPACKAGE:BOOL=Off \
               -DMEDIAPLUGIN_LIBVLC:BOOL=ON \
@@ -123,7 +124,7 @@ jobs:
               "-DLibVLC_LIBRARY=$LIBVLC_LIB_DIR/libvlc.lib" \
               "-DLibVLC_CORE_LIBRARY=$LIBVLC_LIB_DIR/libvlccore.lib"
           else
-            ./indra/scripts/configure_firestorm.sh -A 64 -c ReleaseFS_open -- \
+            ./indra/scripts/configure_firestorm.sh --platform windows -A 64 -c ReleaseFS_open -- \
               -DLL_TESTS:BOOL=FALSE \
               -DPACKAGE:BOOL=Off \
               -DMEDIAPLUGIN_LIBVLC:BOOL=OFF \
