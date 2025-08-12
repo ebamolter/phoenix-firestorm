@@ -41,11 +41,10 @@ jobs:
           echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
-      # ★ 自己コピーを避けつつ scripts/ と indra/scripts/ と indra/build-vc170-64/scripts/ に配置
-      - name: Ensure configure_firestorm.sh in all expected locations
+      # configure_firestorm.sh を scripts/ と indra/scripts/ に配置（自己コピーはスキップ）
+      - name: Ensure configure_firestorm.sh
         shell: pwsh
         run: |
-          # 1) ソース候補
           $candidates = @(
             (Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh'),
             (Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'),
@@ -57,38 +56,39 @@ jobs:
             $raw = 'https://raw.githubusercontent.com/FirestormViewer/phoenix-firestorm/master/scripts/configure_firestorm.sh'
             $src = Join-Path $env:RUNNER_TEMP 'configure_firestorm.sh'
             Invoke-WebRequest -Uri $raw -OutFile $src -UseBasicParsing
-            Write-Host "Fetched configure_firestorm.sh from remote."
           }
 
-          # 2) 配置先
-          $destinations = @(
+          $dests = @(
             (Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh'),
-            (Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'),
-            (Join-Path $env:GITHUB_WORKSPACE 'indra\build-vc170-64\scripts\configure_firestorm.sh')
+            (Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh')
           )
-
-          # 3) 自己コピーはスキップしてコピー
           $srcReal = (Resolve-Path $src).Path
-          foreach ($dst in $destinations) {
-            New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
-            $dstReal = (Resolve-Path $dst -ErrorAction SilentlyContinue)?.Path
-            if ($dstReal -and ($srcReal -ieq $dstReal)) {
-              Write-Host "Skip copying to $dst (same as source)."
-            } else {
-              Copy-Item $src $dst -Force
-              Write-Host "Copied to $dst"
-            }
+          foreach ($d in $dests) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $d) | Out-Null
+            $dstReal = (Resolve-Path $d -ErrorAction SilentlyContinue)?.Path
+            if (-not $dstReal -or ($srcReal -ine $dstReal)) { Copy-Item $src $d -Force }
           }
 
-          # 4) 改行を LF/UTF-8 (no BOM) に正規化 & 実行属性
-          foreach ($t in $destinations) {
-            if (Test-Path $t) {
-              $raw = Get-Content $t -Raw
+          # 改行LF + 実行権限
+          foreach ($d in $dests) {
+            if (Test-Path $d) {
+              $raw = Get-Content $d -Raw
               $lf  = $raw -replace "`r`n","`n"
-              Set-Content -Path $t -Value $lf -NoNewline -Encoding utf8NoBOM
+              Set-Content -Path $d -Value $lf -NoNewline -Encoding utf8NoBOM
             }
           }
-          & 'C:\Program Files\Git\bin\bash.exe' -lc "chmod +x 'scripts/configure_firestorm.sh' 'indra/scripts/configure_firestorm.sh' 'indra/build-vc170-64/scripts/configure_firestorm.sh' || true"
+          & 'C:\Program Files\Git\bin\bash.exe' -lc "chmod +x 'scripts/configure_firestorm.sh' 'indra/scripts/configure_firestorm.sh' || true"
+
+      # ★ 相対参照(../scripts/…)を絶対パスに置換して強制的に見つかるようにする
+      - name: Patch variables to absolute configure script
+        shell: pwsh
+        run: |
+          $vars = "$env:RUNNER_TEMP\variables"
+          $abs  = (Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh').Replace('\','/')
+          $txt  = Get-Content $vars -Raw
+          $txt  = $txt -replace '\.\./scripts/configure_firestorm\.sh', $abs
+          Set-Content -Path $vars -Value $txt -Encoding utf8NoBOM
+          Select-String -Path $vars -Pattern 'configure_firestorm' -Context 0,0 | ForEach-Object { $_.Line } | Write-Host
 
       - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
@@ -116,16 +116,6 @@ jobs:
             echo "LIBVLC_DETECTED=0" >> $env:GITHUB_ENV
           }
           if ($dlldir) { echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV }
-
-      # 参照確認（失敗しても続行）
-      - name: Sanity check (from potential working dirs)
-        shell: bash
-        run: |
-          set +e
-          echo "[repo root]";           ls -l scripts/configure_firestorm.sh
-          echo "[indra/newview]";       (cd indra/newview 2>/dev/null && ls -l ../scripts/configure_firestorm.sh)
-          echo "[indra/build/newview]"; (mkdir -p indra/build-vc170-64/newview && cd indra/build-vc170-64/newview && ls -l ../scripts/configure_firestorm.sh)
-          true
 
       - name: Configure (with/without LibVLC)
         shell: pwsh
