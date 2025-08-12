@@ -76,8 +76,7 @@ jobs:
           } | Select-Object -First 1
 
           $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and
-            (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
+            Test-Path (Join-Path $_.FullName "libvlc.lib") -and Test-Path (Join-Path $_.FullName "libvlccore.lib")
           } | Select-Object -First 1
 
           $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
@@ -118,7 +117,7 @@ jobs:
 
       - name: Build
         shell: pwsh
-        run: autobuild build -A 64 -c ReleaseFS_open --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
+        run: autobuild build -A 64 -c ReleaseFS_open -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
 
       - name: Upload unpackaged viewer
         uses: actions/upload-artifact@v4
