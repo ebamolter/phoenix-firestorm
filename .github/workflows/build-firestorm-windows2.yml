@@ -32,7 +32,6 @@ jobs:
           choco install -y sevenzip git cmake python3
           pip install autobuild
 
-      # 公式 variables をそのまま使う
       - name: Download variables.txt
         shell: pwsh
         run: |
@@ -42,7 +41,6 @@ jobs:
           echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
-      # ここで configure_firestorm.sh の有無を確認し、無ければ暫定で取得
       - name: Verify scripts/configure_firestorm.sh and patch if missing
         shell: pwsh
         run: |
@@ -53,9 +51,7 @@ jobs:
             $raw = "https://raw.githubusercontent.com/FirestormViewer/phoenix-firestorm/master/scripts/configure_firestorm.sh"
             Invoke-WebRequest -Uri $raw -OutFile $scriptPath -UseBasicParsing
           }
-          # 実行権（Git Bash が読むので LF/権限は念のため調整）
           & "C:\Program Files\Git\bin\bash.exe" -lc "chmod +x '$scriptPath' || true"
-          # デバッグ情報
           dir $env:GITHUB_WORKSPACE
           dir (Join-Path $env:GITHUB_WORKSPACE "scripts")
 
@@ -99,23 +95,25 @@ jobs:
 
       - name: Configure (with/without LibVLC)
         shell: pwsh
-        working-directory: ./indra
         run: |
+          $configScript = Join-Path $env:GITHUB_WORKSPACE "scripts/configure_firestorm.sh"
           if ($env:LIBVLC_DETECTED -ne "0") {
             autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
+              --config-script="$configScript" `
               --with-libvlc-includes="$env:LIBVLC_INCLUDE_DIR" `
               --with-libvlc-libs="$env:LIBVLC_LIB_DIR" `
               -- -DPACKAGE:BOOL=Off
           } else {
-            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- -DPACKAGE:BOOL=Off
+            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
+              --config-script="$configScript" `
+              -- -DPACKAGE:BOOL=Off
           }
 
       - name: Build
-        working-directory: ./indra
         run: autobuild build -c ReleaseFS_open -A 64 --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
 
       - name: Upload unpackaged viewer
         uses: actions/upload-artifact@v4
         with:
           name: firestorm-unpackaged
-          path: indra/build-vc170-64/newview/Release
+          path: build-vc170-64/newview/Release
