@@ -1,23 +1,15 @@
-name: Build Firestorm Windows (No Package)
+name: Debug Firestorm Script Paths
 
 on:
   workflow_dispatch:
     inputs:
       branch_or_tag:
-        description: 'Build target branch or tag (例: master または Firestorm_7.1.13)'
+        description: 'Branch or tag to build'
         required: true
         default: 'master'
-      enable_libvlc:
-        description: "Enable LibVLC support"
-        required: true
-        default: "true"
-      libvlc_sdk_url:
-        description: "URL of LibVLC SDK (7z/zip)"
-        required: true
-        default: "https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z"
 
 jobs:
-  build:
+  debug:
     runs-on: windows-2022
 
     steps:
@@ -27,115 +19,45 @@ jobs:
           ref: ${{ github.event.inputs.branch_or_tag }}
           submodules: recursive
 
-      - name: Install Autobuild
-        run: |
-          choco install -y sevenzip git cmake python3
-          pip install autobuild
-
-      - name: Download variables.txt
+      - name: Show Current Paths and Files
         shell: pwsh
         run: |
-          $url = "https://raw.githubusercontent.com/FirestormViewer/fs-build-variables/38e0e2c27dac75af6701f47eae95f583eac53613/variables"
-          $dst = "$env:RUNNER_TEMP\variables"
-          Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
-          "AUTOBUILD_VARIABLES_FILE=$dst" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "=== GITHUB_WORKSPACE ==="
+          Write-Host $env:GITHUB_WORKSPACE
+          Write-Host ""
 
-      # configure_firestorm.sh を4か所に用意（どこから ../scripts を引かれても当たるように）
-      - name: Ensure configure_firestorm.sh in all expected locations
-        shell: pwsh
-        run: |
-          $candidates = @(
-            (Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh'),
-            (Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'),
-            (Join-Path $env:GITHUB_WORKSPACE 'phoenix-firestorm\scripts\configure_firestorm.sh')
-          )
-          $src = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $src) {
-            $raw = 'https://raw.githubusercontent.com/FirestormViewer/phoenix-firestorm/master/scripts/configure_firestorm.sh'
-            $src = Join-Path $env:RUNNER_TEMP 'configure_firestorm.sh'
-            Invoke-WebRequest -Uri $raw -OutFile $src -UseBasicParsing
+          Write-Host "=== Current Directory ==="
+          Get-Location
+          Write-Host ""
+
+          Write-Host "=== All configure_firestorm.sh files under workspace ==="
+          Get-ChildItem -Recurse -Path $env:GITHUB_WORKSPACE -Filter "configure_firestorm.sh" | ForEach-Object {
+            Write-Host $_.FullName
           }
+          Write-Host ""
 
-          $dests = @(
-            (Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh'),                 # repo root/scripts
-            (Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'),          # indra/scripts
-            (Join-Path $env:GITHUB_WORKSPACE 'indra\build-vc170-64\scripts\configure_firestorm.sh'), # indra/build-*/scripts
-            (Join-Path $env:GITHUB_WORKSPACE 'build-vc170-64\scripts\configure_firestorm.sh')  # ← 追加: repo root/build-*/scripts
+      - name: Check ../scripts from various working dirs
+        shell: pwsh
+        run: |
+          $dirs = @(
+            "$env:GITHUB_WORKSPACE",
+            "$env:GITHUB_WORKSPACE/indra",
+            "$env:GITHUB_WORKSPACE/indra/build-vc170-64/newview"
           )
 
-          # build ディレクトリ（仮）も先に作る
-          foreach ($dir in @(
-            (Join-Path $env:GITHUB_WORKSPACE 'indra\build-vc170-64\newview'),
-            (Join-Path $env:GITHUB_WORKSPACE 'build-vc170-64\newview')
-          )) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-
-          foreach ($d in $dests) {
-            New-Item -ItemType Directory -Force -Path (Split-Path $d) | Out-Null
-            Copy-Item $src $d -Force
-            # LF + UTF-8 (no BOM)
-            $raw = Get-Content $d -Raw
-            $lf  = $raw -replace "`r`n","`n"
-            Set-Content -Path $d -Value $lf -NoNewline -Encoding utf8NoBOM
-          }
-          & 'C:\Program Files\Git\bin\bash.exe' -lc "chmod +x 'scripts/configure_firestorm.sh' 'indra/scripts/configure_firestorm.sh' 'indra/build-vc170-64/scripts/configure_firestorm.sh' 'build-vc170-64/scripts/configure_firestorm.sh' || true"
-
-      - name: Fetch LibVLC SDK (7z/zip)
-        if: ${{ github.event.inputs.enable_libvlc == 'true' }}
-        shell: pwsh
-        run: |
-          $url = "${{ github.event.inputs.libvlc_sdk_url }}"
-          $dst = "$env:RUNNER_TEMP\libvlc_pkg"
-          $zip = "$dst\pkg"
-          New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          $fname = "$dst\$(Split-Path $url -Leaf)"
-          Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
-          if ($fname.ToLower().EndsWith(".7z")) {
-            & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
-          } else {
-            Expand-Archive -Path $fname -DestinationPath $zip -Force
-          }
-          $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { Test-Path (Join-Path $_.FullName "vlc\vlc.h") } | Select-Object -First 1
-          $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib")) } | Select-Object -First 1
-          $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0 } | Select-Object -First 1
-          if ($inc -and $libdir) {
-            "LIBVLC_INCLUDE_DIR=$($inc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
-            "LIBVLC_LIB_DIR=$($libdir.FullName)"  | Out-File -FilePath $env:GITHUB_ENV -Append
-            "LIBVLC_DETECTED=1"                   | Out-File -FilePath $env:GITHUB_ENV -Append
-          } else {
-            "LIBVLC_DETECTED=0"                   | Out-File -FilePath $env:GITHUB_ENV -Append
-          }
-          if ($dlldir) { "PATH=$($dlldir.FullName);$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append }
-
-      # 参照テスト（失敗しても続行）
-      - name: Sanity check (non-fatal)
-        shell: bash
-        run: |
-          set +e
-          for d in "." "indra" "indra/newview" "indra/build-vc170-64/newview" "build-vc170-64/newview"; do
-            echo "== CWD: $d =="; (cd "$d" 2>/dev/null && pwd && ls -l ../scripts/configure_firestorm.sh || echo NOTFOUND)
-          done
-          true
-
-      - name: Configure (with/without LibVLC)
-        shell: pwsh
-        working-directory: ./indra
-        run: |
-          if ($env:LIBVLC_DETECTED -eq '1') {
-            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
-              --with-libvlc-includes="$env:LIBVLC_INCLUDE_DIR" `
-              --with-libvlc-libs="$env:LIBVLC_LIB_DIR" `
-              -- -DPACKAGE:BOOL=Off
-          } else {
-            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- -DPACKAGE:BOOL=Off
+          foreach ($d in $dirs) {
+            Write-Host "=== Testing from $d ==="
+            Push-Location $d
+            $target = Join-Path ".." "scripts\configure_firestorm.sh"
+            Write-Host "Looking for: $target"
+            if (Test-Path $target) {
+              Write-Host "FOUND: " (Resolve-Path $target).Path
+            } else {
+              Write-Host "NOT FOUND"
+            }
+            Pop-Location
+            Write-Host ""
           }
 
-      - name: Build
-        working-directory: ./indra
-        run: autobuild build -c ReleaseFS_open -A 64 --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
-
-      - name: Upload unpackaged viewer
-        uses: actions/upload-artifact@v4
-        with:
-          name: firestorm-unpackaged
-          path: indra/build-vc170-64/newview/Release
+      - name: Finish
+        run: echo "Debug finished."
