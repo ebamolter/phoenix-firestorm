@@ -38,14 +38,14 @@ jobs:
       - name: Clone fs-build-variables
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\src" | Out-Null
-          cd "$env:USERPROFILE\src"
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE/src" | Out-Null
+          cd "$env:USERPROFILE/src"
           git clone https://github.com/FirestormViewer/fs-build-variables.git
 
       - name: Set AUTOBUILD_VARIABLES_FILE
         shell: pwsh
         run: |
-          echo "AUTOBUILD_VARIABLES_FILE=$env:USERPROFILE\src\fs-build-variables\variables" >> $env:GITHUB_ENV
+          echo "AUTOBUILD_VARIABLES_FILE=$env:USERPROFILE/src/fs-build-variables/variables" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
       - name: Install Autobuild & Requirements
@@ -59,20 +59,20 @@ jobs:
         shell: pwsh
         run: |
           $url = "${{ github.event.inputs.libvlc_sdk_url }}"
-          $dst = "$env:RUNNER_TEMP\libvlc_pkg"
-          $zip = "$dst\pkg"
+          $dst = "$env:RUNNER_TEMP/libvlc_pkg"
+          $zip = "$dst/pkg"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          $fname = "$dst\$(Split-Path $url -Leaf)"
+          $fname = "$dst/$(Split-Path $url -Leaf)"
           Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
 
           if ($fname.ToLower().EndsWith(".7z")) {
-            & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
+            & "C:/Program Files/7-Zip/7z.exe" x $fname "-o$zip" -y | Out-Null
           } else {
             Expand-Archive -Path $fname -DestinationPath $zip -Force
           }
 
           $inc = Get-ChildItem -Recurse -Path $zip | Where-Object {
-            $_.PSIsContainer -and (Test-Path (Join-Path $_.FullName "vlc\vlc.h"))
+            $_.PSIsContainer -and (Test-Path (Join-Path $_.FullName "vlc/vlc.h"))
           } | Select-Object -First 1
 
           $libdir = Get-ChildItem -Recurse -Path $zip | Where-Object {
@@ -98,7 +98,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Output "=== Current directory ==="
-          pwd
+          Get-Location
           Write-Output "=== GITHUB_WORKSPACE ==="
           Write-Output $env:GITHUB_WORKSPACE
           Write-Output "=== Top level in workspace ==="
@@ -132,11 +132,11 @@ jobs:
         shell: pwsh
         working-directory: ${{ github.workspace }}
         run: |
-          if (Test-Path "build-vc170-64\Firestorm.sln") {
+          if (Test-Path "build-vc170-64/Firestorm.sln") {
             Write-Output "✅ Firestorm.sln found."
           } else {
             Write-Output "❌ Firestorm.sln NOT found, attempting manual cmake generation..."
-            cmake -S "${{ github.workspace }}" -B "${{ github.workspace }}\build-vc170-64" -G "Visual Studio 17 2022" -A x64
+            cmake -S "${{ github.workspace }}" -B "${{ github.workspace }}/build-vc170-64" -G "Visual Studio 17 2022" -A x64
           }
 
       - name: List .sln file for confirmation
@@ -147,7 +147,8 @@ jobs:
 
       - name: Build
         shell: pwsh
-        run: autobuild build -A 64 -c ReleaseFS_open --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
+        run: |
+          autobuild build -A 64 -c ReleaseFS_open --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
 
       - name: Upload unpackaged viewer
         uses: actions/upload-artifact@v4
