@@ -188,5 +188,5 @@ jobs:
       - name: Upload unpackaged viewer
         uses: actions/upload-artifact@v4
         with:
-          name: firestorm-unpackaged
-          path: indra/build-vc170-64/newview/Release
+        name: firestorm-unpackaged
+        path: indra/build-vc170-64/newview/Release
