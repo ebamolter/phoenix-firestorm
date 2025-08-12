@@ -54,14 +54,13 @@ jobs:
           python -m pip install -r requirements.txt
           autobuild --version
 
-      - name: Fetch LibVLC SDK
+      - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
         shell: pwsh
         run: |
           $url = "${{ github.event.inputs.libvlc_sdk_url }}"
           $dst = "$env:RUNNER_TEMP\libvlc_pkg"
           $zip = "$dst\pkg"
-          $outFile = "$dst\vlc_detected.ps1"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           $fname = "$dst\$(Split-Path $url -Leaf)"
           Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
@@ -77,7 +76,7 @@ jobs:
           } | Select-Object -First 1
 
           $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            (Test-Path "$($_.FullName)\libvlc.lib") -and (Test-Path "$($_.FullName)\libvlccore.lib")
+            Test-Path (Join-Path $_.FullName "libvlc.lib") -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
           } | Select-Object -First 1
 
           $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
@@ -85,31 +84,20 @@ jobs:
           } | Select-Object -First 1
 
           if ($inc -and $libdir) {
-            echo "LIBVLC_DETECTED=1" | Out-File -FilePath $outFile
-            echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $outFile
-            echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $outFile
+            echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
+            echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
           } else {
-            echo "LIBVLC_DETECTED=0" | Out-File -FilePath $outFile
+            echo "LIBVLC_DETECTED=0" >> $env:GITHUB_ENV
           }
 
           if ($dlldir) {
-            echo "LIBVLC_DLL_DIR=$($dlldir.FullName)" >> $outFile
+            echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV
           }
-
-      - name: Import LibVLC Env Vars (Bash)
-        shell: bash
-        run: |
-          if [[ -f "$RUNNER_TEMP/libvlc_pkg/vlc_detected.ps1" ]]; then
-            while IFS='=' read -r key value; do
-              echo "$key=$value" >> "$GITHUB_ENV"
-            done < "$RUNNER_TEMP/libvlc_pkg/vlc_detected.ps1"
-          fi
 
       - name: Configure with configure_firestorm.sh
         shell: bash
         run: |
-          echo "LIBVLC_DETECTED=$LIBVLC_DETECTED"
-          if [[ "$LIBVLC_DETECTED" == "1" ]]; then
+          if [[ "$LIBVLC_DETECTED" != "0" ]]; then
             ./indra/scripts/configure_firestorm.sh -A 64 -c ReleaseFS_open -- \
               -DLL_TESTS:BOOL=FALSE \
               -DPACKAGE:BOOL=Off \
@@ -124,13 +112,22 @@ jobs:
               -DPACKAGE:BOOL=Off \
               -DMEDIAPLUGIN_LIBVLC:BOOL=OFF \
               -DUSE_VLC:BOOL=OFF
+
+      - name: Ensure Firestorm.sln exists
+        shell: bash
+        run: |
+          if [ ! -f build-vc170-64/Firestorm.sln ]; then
+            echo "Firestorm.sln not found, regenerating with cmake..."
+            cmake -S . -B build-vc170-64 -G "Visual Studio 17 2022" -A x64
+          else
+            echo "Firestorm.sln found."
           fi
 
       - name: Build
         shell: pwsh
         run: autobuild build -A 64 -c ReleaseFS_open --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
 
-      - name: Upload Unpackaged Viewer
+      - name: Upload unpackaged viewer
         uses: actions/upload-artifact@v4
         with:
           name: firestorm-windows-unpackaged
