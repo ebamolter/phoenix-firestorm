@@ -21,85 +21,35 @@ jobs:
     runs-on: windows-2022
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.branch_or_tag }}
-          submodules: recursive
+      - uses: actions/checkout@v4
 
-      - name: Install Autobuild and tools
+      - name: Install 7zip
+        run: choco install 7zip -y
+
+      - name: Extract LibVLC SDK
         run: |
-          choco install -y sevenzip git cmake python3
-          pip install autobuild
-
-      - name: Download variables.txt
+          mkdir libvlc_pkg
+          curl -L ${{ github.event.inputs.libvlc_sdk_url }} -o libvlc.7z
+          7z x libvlc.7z -olibvlc_pkg
         shell: pwsh
-        run: |
-          $url = "https://raw.githubusercontent.com/FirestormViewer/fs-build-variables/38e0e2c27dac75af6701f47eae95f583eac53613/variables"
-          $dst = "$env:RUNNER_TEMP\variables"
-          Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
-          echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
-          echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
-      - name: Prepare configure_firestorm.sh path
-        shell: pwsh
+      - name: Ensure configure_firestorm.sh is LF and UTF-8
         run: |
-          $cfg = "$env:GITHUB_WORKSPACE\scripts\configure_firestorm.sh"
-          if (!(Test-Path $cfg)) {
-            Write-Error "scripts/configure_firestorm.sh が見つかりません。配置場所を確認してください。"
-          }
-          & "C:\Program Files\Git\bin\bash.exe" -lc "chmod +x '${cfg.Replace('\','/')}' || true"
-          echo "CONFIG_SCRIPT=$cfg" >> $env:GITHUB_ENV
-
-      - name: Move configure_firestorm.sh to proper relative path
+          $path = "indra/scripts/configure_firestorm.sh"
+          (Get-Content $path) | Set-Content -Encoding UTF8 -NoByteOrderMark $path
         shell: pwsh
-        run: |
-          $target = Join-Path $env:GITHUB_WORKSPACE "scripts"
-          if (!(Test-Path $target)) {
-            New-Item -ItemType Directory -Path $target | Out-Null
-          }
-          Copy-Item "$env:GITHUB_WORKSPACE/indra/scripts/configure_firestorm.sh" "$env:GITHUB_WORKSPACE/scripts/configure_firestorm.sh" -Force
-
-      - name: Fetch LibVLC SDK
-        if: ${{ github.event.inputs.enable_libvlc == 'true' }}
-        shell: pwsh
-        run: |
-          $url = "${{ github.event.inputs.libvlc_sdk_url }}"
-          $dst = "$env:RUNNER_TEMP\libvlc_pkg"
-          $zip = "$dst\pkg"
-          New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          $fname = "$dst\$(Split-Path $url -Leaf)"
-          Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
-          if ($fname.ToLower().EndsWith(".7z")) {
-            & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
-          } else {
-            Expand-Archive -Path $fname -DestinationPath $zip -Force
-          }
-          $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            Test-Path (Join-Path $_.FullName "vlc\vlc.h")
-          } | Select-Object -First 1
-          $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
-          } | Select-Object -First 1
-          $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0
-          } | Select-Object -First 1
-          if ($inc -and $libdir) {
-            echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
-            echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
-          }
-          if ($dlldir) {
-            echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV
-          }
 
       - name: Configure with/without LibVLC
         working-directory: indra
         shell: pwsh
         run: |
-          $cfg = "../scripts/configure_firestorm.sh"
+          $cfg = "./scripts/configure_firestorm.sh"
+
           if (!(Test-Path $cfg)) {
             Write-Error "パスが無効です: $cfg"
+            exit 1
           }
+
           if ($env:LIBVLC_INCLUDE_DIR -and $env:LIBVLC_LIB_DIR) {
             autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
               --config-script="$cfg" `
@@ -111,12 +61,6 @@ jobs:
               --config-script="$cfg" `
               -- -DPACKAGE:BOOL=Off
           }
-
-      - name: Build
-        run: autobuild build -c ReleaseFS_open -A 64 --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
-
-      - name: Upload unpackaged viewer
-        uses: actions/upload-artifact@v4
-        with:
-          name: firestorm-unpackaged
-          path: indra/build-vc170-64/newview/Release
+        env:
+          LIBVLC_INCLUDE_DIR: ${{ github.workspace }}\libvlc_pkg\vlc-3.0.9.2\sdk\include
+          LIBVLC_LIB_DIR: ${{ github.workspace }}\libvlc_pkg\vlc-3.0.9.2\sdk\lib
