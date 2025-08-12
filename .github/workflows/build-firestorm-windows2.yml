@@ -3,6 +3,10 @@ name: Build Firestorm Windows (No Package)
 on:
   workflow_dispatch:
     inputs:
+      branch_or_tag:
+        description: 'Build target branch or tag (例: master または Firestorm_7.1.13)'
+        required: true
+        default: 'master'
       enable_libvlc:
         description: "Enable LibVLC support"
         required: true
@@ -18,8 +22,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.branch_or_tag }}
           submodules: recursive
 
       - name: Install Autobuild
