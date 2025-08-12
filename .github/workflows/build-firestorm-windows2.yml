@@ -1,82 +1,82 @@
 name: Build Firestorm Windows (LibVLC, no package)
 
-on: 
-  workflow_dispatch: 
-    inputs: 
-      branch_or_tag: 
-        description: 'Branch or tag (例: master または Firestorm_7.1.13)' 
-        required: true 
-        default: '7.2.0_preview' 
-      enable_libvlc: 
-        description: 'LibVLCを有効化する' 
-        required: true 
-        default: 'true' 
-      libvlc_sdk_url: 
-        description: 'VLC SDK URL (.7z/.zip, includes vlc.h & libvlc.lib)' 
-        required: true 
-        default: 'https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z' 
+on:
+  workflow_dispatch:
+    inputs:
+      branch_or_tag:
+        description: 'Branch or tag (例: master または Firestorm_7.1.13)'
+        required: true
+        default: '7.2.0_preview'
+      enable_libvlc:
+        description: 'LibVLCを有効化する'
+        required: true
+        default: 'true'
+      libvlc_sdk_url:
+        description: 'VLC SDK URL (.7z/.zip, includes vlc.h & libvlc.lib)'
+        required: true
+        default: 'https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z'
 
-jobs: 
-  build: 
+jobs:
+  build:
     runs-on: windows-2022
 
-    steps: 
-      - name: Checkout Firestorm Source 
-        uses: actions/checkout@v4 
-        with: 
-          ref: ${{ github.event.inputs.branch_or_tag }} 
+    steps:
+      - name: Checkout Firestorm Source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch_or_tag }}
           submodules: recursive
 
-      - name: Setup Python 
-        uses: actions/setup-python@v5 
-        with: 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
           python-version: '3.11'
 
-      - name: Upgrade pip 
+      - name: Upgrade pip
         run: python -m pip install --upgrade pip
 
-      - name: Clone fs-build-variables 
-        shell: pwsh 
-        run: | 
-          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\src" | Out-Null 
-          cd "$env:USERPROFILE\src" 
+      - name: Clone fs-build-variables
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\src" | Out-Null
+          cd "$env:USERPROFILE\src"
           git clone https://github.com/FirestormViewer/fs-build-variables.git
 
-      - name: Set AUTOBUILD_VARIABLES_FILE 
-        shell: pwsh 
-        run: | 
-          echo "AUTOBUILD_VARIABLES_FILE=$env:USERPROFILE\src\fs-build-variables\variables" >> $env:GITHUB_ENV 
+      - name: Set AUTOBUILD_VARIABLES_FILE
+        shell: pwsh
+        run: |
+          echo "AUTOBUILD_VARIABLES_FILE=$env:USERPROFILE\src\fs-build-variables\variables" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
-      - name: Install Autobuild & Requirements 
-        shell: pwsh 
-        run: | 
-          python -m pip install -r requirements.txt 
+      - name: Install Autobuild & Requirements
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements.txt
           autobuild --version
 
-      - name: Fetch LibVLC SDK (7z/zip) 
-        if: ${{ github.event.inputs.enable_libvlc == 'true' }} 
-        shell: pwsh 
-        run: | 
-          $url = "${{ github.event.inputs.libvlc_sdk_url }}" 
-          $dst = "$env:RUNNER_TEMP\libvlc_pkg" 
-          $zip = "$dst\pkg" 
-          New-Item -ItemType Directory -Force -Path $dst | Out-Null 
-          $fname = "$dst\$(Split-Path $url -Leaf)" 
-          Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing 
+      - name: Fetch LibVLC SDK (7z/zip)
+        if: ${{ github.event.inputs.enable_libvlc == 'true' }}
+        shell: pwsh
+        run: |
+          $url = "${{ github.event.inputs.libvlc_sdk_url }}"
+          $dst = "$env:RUNNER_TEMP\libvlc_pkg"
+          $zip = "$dst\pkg"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          $fname = "$dst\$(Split-Path $url -Leaf)"
+          Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
 
-          if ($fname.ToLower().EndsWith(".7z")) { 
-            & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null 
-          } else { 
-            Expand-Archive -Path $fname -DestinationPath $zip -Force 
-          } 
+          if ($fname.ToLower().EndsWith(".7z")) {
+            & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
+          } else {
+            Expand-Archive -Path $fname -DestinationPath $zip -Force
+          }
 
           $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             Test-Path (Join-Path $_.FullName "vlc\vlc.h")
           } | Select-Object -First 1
 
           $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
+            Test-Path (Join-Path $_.FullName "libvlc.lib") -and Test-Path (Join-Path $_.FullName "libvlccore.lib")
           } | Select-Object -First 1
 
           $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
@@ -94,9 +94,20 @@ jobs:
             echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV
           }
 
+      - name: Debug Source Structure
+        shell: bash
+        run: |
+          echo "===== [Root Dir] ====="
+          ls -alh
+          echo "===== [indra Dir] ====="
+          ls -alh ./indra
+          echo "===== [indra/scripts] ====="
+          ls -alh ./indra/scripts
+
       - name: Configure with configure_firestorm.sh
         shell: bash
         run: |
+          set -x
           if [[ "$LIBVLC_DETECTED" != "0" ]]; then
             ./indra/scripts/configure_firestorm.sh -A 64 -c ReleaseFS_open -- \
               -DLL_TESTS:BOOL=FALSE \
