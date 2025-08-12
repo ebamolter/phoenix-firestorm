@@ -41,15 +41,40 @@ jobs:
           echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
-      - name: Prepare configure_firestorm.sh
-        shell: bash
+      - name: Dump workspace structure (PowerShell)
+        shell: pwsh
         run: |
-          mkdir -p indra/scripts
-          cp scripts/configure_firestorm.sh indra/scripts/configure_firestorm.sh
-          dos2unix indra/scripts/configure_firestorm.sh
-          chmod +x indra/scripts/configure_firestorm.sh
+          Write-Host "==== [Environment Variables] ===="
+          Write-Host "GITHUB_WORKSPACE = $env:GITHUB_WORKSPACE"
+          Write-Host "Current Location:"
+          Get-Location
 
-      - name: Fetch LibVLC SDK (7z/zip)
+          Write-Host "==== [Top-level files and folders] ===="
+          Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse | ForEach-Object {
+            Write-Host $_.FullName
+          }
+
+          Write-Host "==== [indra/scripts contents] ===="
+          $indraScripts = Join-Path $env:GITHUB_WORKSPACE "indra\scripts"
+          if (Test-Path $indraScripts) {
+            Get-ChildItem -Path $indraScripts -Recurse | ForEach-Object {
+              Write-Host $_.FullName
+            }
+          } else {
+            Write-Host "indra/scripts ディレクトリが存在しません。"
+          }
+
+      - name: Resolve configure_firestorm.sh absolute path
+        shell: pwsh
+        run: |
+          $cfg = "$env:GITHUB_WORKSPACE/indra/scripts/configure_firestorm.sh"
+          if (!(Test-Path $cfg)) {
+            Write-Error "indra/scripts/configure_firestorm.sh が見つかりません。"
+          }
+          & "C:\Program Files\Git\bin\bash.exe" -lc "chmod +x '${cfg.Replace('\','/')}' || true"
+          echo "CONFIG_SCRIPT=$cfg" >> $env:GITHUB_ENV
+
+      - name: Fetch LibVLC SDK
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
         shell: pwsh
         run: |
@@ -77,13 +102,17 @@ jobs:
             echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
             echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
           }
-          if ($dlldir) { echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV }
+          if ($dlldir) {
+            echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV
+          }
 
-      - name: Configure with autobuild
-        working-directory: indra
+      - name: Configure with/without LibVLC
         shell: pwsh
         run: |
-          $cfg = "$env:GITHUB_WORKSPACE/indra/scripts/configure_firestorm.sh"
+          $cfg = "$env:CONFIG_SCRIPT"
+          if (!(Test-Path $cfg)) {
+            Write-Error "設定スクリプトが見つかりません: $cfg"
+          }
           if ($env:LIBVLC_INCLUDE_DIR -and $env:LIBVLC_LIB_DIR) {
             autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
               --config-script="$cfg" `
