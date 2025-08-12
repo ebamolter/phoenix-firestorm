@@ -1,20 +1,20 @@
-name: Build Firestorm Windows (No Package)
+name: Build Firestorm Windows (LibVLC, no package)
 
 on:
   workflow_dispatch:
     inputs:
       branch_or_tag:
-        description: 'Build target branch or tag (例: master または Firestorm_7.1.13)'
+        description: 'Branch or tag'
         required: true
-        default: '7.2.0_preview'  # ← ここを master から変更
+        default: '7.2.0_preview'
       enable_libvlc:
-        description: "Enable LibVLC support"
+        description: 'Enable LibVLC'
         required: true
-        default: "true"
+        default: 'true'
       libvlc_sdk_url:
-        description: "URL of LibVLC SDK (7z/zip)"
+        description: 'VLC SDK URL (.7z/.zip)'
         required: true
-        default: "https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z"
+        default: 'https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z'
 
 jobs:
   build:
@@ -24,58 +24,125 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: ebamolter/phoenix-firestorm
           ref: ${{ github.event.inputs.branch_or_tag }}
           submodules: recursive
 
-      - name: Debug: Show root directory structure
-        run: |
-          echo "=== ROOT DIR ==="
-          dir
-          echo "=== phoenix-firestorm DIR ==="
-          dir phoenix-firestorm
-          echo "=== phoenix-firestorm/indra DIR ==="
-          dir phoenix-firestorm\indra
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install pip deps (includes autobuild)
+        shell: pwsh
         run: |
-          choco install --no-progress --yes 7zip cmake git nsis yasm
-          choco install --no-progress --yes visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --locale en-US"
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install autobuild
 
-      - name: Download and extract LibVLC
+      - name: Expose Python scripts path to all shells
+        shell: pwsh
+        run: |
+          echo "$env:pythonLocation\Scripts" >> $env:GITHUB_PATH
+          echo "$env:pythonLocation" >> $env:GITHUB_PATH
+
+      - name: Setup MSBuild (VS2022)
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Fetch LibVLC SDK
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
+        shell: pwsh
         run: |
-          mkdir _temp
-          cd _temp
-          curl -L "${{ github.event.inputs.libvlc_sdk_url }}" -o libvlc.7z
-          7z x libvlc.7z -o"libvlc_pkg"
+          $url = "${{ github.event.inputs.libvlc_sdk_url }}"
+          $dst = "$env:RUNNER_TEMP\libvlc_pkg"
+          $zip = "$dst\pkg"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          $fname = "$dst\$(Split-Path $url -Leaf)"
+          Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
+          if ($fname.ToLower().EndsWith(".7z")) {
+            & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
+          } else {
+            Expand-Archive -Path $fname -DestinationPath $zip -Force
+          }
+          $inc = Get-ChildItem -Recurse -Path $zip | Where-Object {
+            $_.PSIsContainer -and (Test-Path (Join-Path $_.FullName "vlc\vlc.h"))
+          } | Select-Object -First 1
+          $libdir = Get-ChildItem -Recurse -Path $zip | Where-Object {
+            $_.PSIsContainer -and (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
+          } | Select-Object -First 1
+          $dlldir = Get-ChildItem -Recurse -Path $zip | Where-Object {
+            $_.PSIsContainer -and ((Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0)
+          } | Select-Object -First 1
+          if ($inc -and $libdir) {
+            "LIBVLC_INCLUDE_DIR=$($inc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "LIBVLC_LIB_DIR=$($libdir.FullName)"   | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            "LIBVLC_DETECTED=0" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+          if ($dlldir) {
+            $dl = $dlldir.FullName
+            $dl | Out-File -FilePath $env:GITHUB_PATH -Append
+          }
 
-      - name: Configure Firestorm
+      - name: Set build env vars
+        shell: pwsh
         run: |
-          cd phoenix-firestorm
-          bash ./indra/scripts/configure_firestorm.sh \
-            --platform windows \
-            -- -A x64 \
-            -DLL_TESTS:BOOL=FALSE \
-            -DPACKAGE:BOOL=Off \
-            -DMEDIAPLUGIN_LIBVLC:BOOL=ON \
-            -DUSE_VLC:BOOL=ON \
-            "-DLibVLC_INCLUDE_DIR=${{ github.workspace }}/phoenix-firestorm/_temp/libvlc_pkg/vlc-3.0.9.2/sdk/include" \
-            "-DLibVLC_LIBRARY=${{ github.workspace }}/phoenix-firestorm/_temp/libvlc_pkg/vlc-3.0.9.2/sdk/lib/libvlc.lib" \
-            "-DLibVLC_CORE_LIBRARY=${{ github.workspace }}/phoenix-firestorm/_temp/libvlc_pkg/vlc-3.0.9.2/sdk/lib/libvlccore.lib"
+          "LL_BUILD=windows" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AUTOBUILD_VSVER=170" | Out-File -FilePath $env:GITHUB_ENV -Append
+          # Firestorm repo ships autobuild.xml at repo root
+          "AUTOBUILD_VARIABLES_FILE=${{ github.workspace }}\autobuild.xml" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Check for .sln
+      - name: Debug workspace
+        shell: pwsh
+        run: |
+          "WS=$env:GITHUB_WORKSPACE"
+          if (Test-Path "$env:GITHUB_WORKSPACE\indra\CMakeLists.txt") {
+            "FOUND indra/CMakeLists.txt"
+          } else {
+            "MISSING indra/CMakeLists.txt"
+            Get-ChildItem -Recurse -Filter CMakeLists.txt $env:GITHUB_WORKSPACE | % { $_.FullName }
+          }
+
+      - name: Configure (via script)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -x
+          if [[ "${{ github.event.inputs.enable_libvlc }}" == "true" && "${LIBVLC_DETECTED:-1}" != "0" ]]; then
+            ./indra/scripts/configure_firestorm.sh --platform windows -- -G "Visual Studio 17 2022" -A x64 \
+              -DLL_TESTS:BOOL=FALSE \
+              -DPACKAGE:BOOL=Off \
+              -DMEDIAPLUGIN_LIBVLC:BOOL=ON \
+              -DUSE_VLC:BOOL=ON \
+              "-DLibVLC_INCLUDE_DIR=$LIBVLC_INCLUDE_DIR" \
+              "-DLibVLC_LIBRARY=$LIBVLC_LIB_DIR/libvlc.lib" \
+              "-DLibVLC_CORE_LIBRARY=$LIBVLC_LIB_DIR/libvlccore.lib"
+          else
+            ./indra/scripts/configure_firestorm.sh --platform windows -- -G "Visual Studio 17 2022" -A x64 \
+              -DLL_TESTS:BOOL=FALSE \
+              -DPACKAGE:BOOL=Off \
+              -DMEDIAPLUGIN_LIBVLC:BOOL=OFF \
+              -DUSE_VLC:BOOL=OFF
+          fi
+
+      - name: Ensure solution exists (fallback cmake)
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
         run: |
           if (Test-Path "build-vc170-64\Firestorm.sln") {
-            Write-Output "✅ Firestorm.sln found."
+            "✅ Firestorm.sln found."
           } else {
-            Write-Output "❌ Firestorm.sln NOT found, attempting manual cmake generation..."
-            cmake -S . -B build-vc170-64 -G "Visual Studio 17 2022" -A x64
-            dir build-vc170-64
+            "❌ Firestorm.sln NOT found. Generating..."
+            cmake -S "${{ github.workspace }}\indra" -B "${{ github.workspace }}\build-vc170-64" -G "Visual Studio 17 2022" -A x64
           }
-        shell: pwsh
 
-      - name: Build Firestorm
+      - name: Build
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
         run: |
-          cd build-vc170-64
-          msbuild Firestorm.sln /p:Configuration=Release /m
+          msbuild build-vc170-64\Firestorm.sln /p:Configuration=Release /m /v:m /clp:ErrorsOnly;Summary
+
+      - name: Upload unpackaged viewer
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestorm-windows-unpackaged
+          path: build-vc*-64/newview/Release
