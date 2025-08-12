@@ -66,24 +66,25 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
 
           if ($fname.ToLower().EndsWith(".7z")) {
-            & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
+            & "C:\\Program Files\\7-Zip\\7z.exe" x $fname "-o$zip" -y | Out-Null
           } else {
             Expand-Archive -Path $fname -DestinationPath $zip -Force
           }
 
           $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            Test-Path (Join-Path $_.FullName "vlc\vlc.h")
-          }
+            Test-Path (Join-Path $_.FullName "vlc\\vlc.h")
+          } | Select-Object -First 1
 
           $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
-          }
+            Test-Path (Join-Path $_.FullName "libvlc.lib") -and Test-Path (Join-Path $_.FullName "libvlccore.lib")
+          } | Select-Object -First 1
 
           $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0
-          }
+          } | Select-Object -First 1
 
           if ($inc -and $libdir) {
+            echo "LIBVLC_DETECTED=1" >> $env:GITHUB_ENV
             echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
             echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
           } else {
@@ -97,6 +98,9 @@ jobs:
       - name: Configure with configure_firestorm.sh
         shell: bash
         run: |
+          export AUTOBUILD_VARIABLES_FILE="$GITHUB_WORKSPACE/fs-build-variables/variables"
+          echo "AUTOBUILD_VARIABLES_FILE=$AUTOBUILD_VARIABLES_FILE"
+
           if [[ "$LIBVLC_DETECTED" != "0" ]]; then
             ./indra/scripts/configure_firestorm.sh -A 64 -c ReleaseFS_open -- \
               -DLL_TESTS:BOOL=FALSE \
