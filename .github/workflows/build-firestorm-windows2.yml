@@ -32,7 +32,7 @@ jobs:
           choco install -y sevenzip git cmake python3
           pip install autobuild
 
-      # 公式 variables を取得してそのまま使う
+      # 公式 variables をそのまま使う
       - name: Download variables.txt
         shell: pwsh
         run: |
@@ -41,6 +41,23 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
           echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
+
+      # ここで configure_firestorm.sh の有無を確認し、無ければ暫定で取得
+      - name: Verify scripts/configure_firestorm.sh and patch if missing
+        shell: pwsh
+        run: |
+          $scriptPath = Join-Path $env:GITHUB_WORKSPACE "scripts\configure_firestorm.sh"
+          if (!(Test-Path $scriptPath)) {
+            Write-Host "configure_firestorm.sh not found. Fetching a fallback copy..."
+            New-Item -ItemType Directory -Force -Path (Split-Path $scriptPath) | Out-Null
+            $raw = "https://raw.githubusercontent.com/FirestormViewer/phoenix-firestorm/master/scripts/configure_firestorm.sh"
+            Invoke-WebRequest -Uri $raw -OutFile $scriptPath -UseBasicParsing
+          }
+          # 実行権（Git Bash が読むので LF/権限は念のため調整）
+          & "C:\Program Files\Git\bin\bash.exe" -lc "chmod +x '$scriptPath' || true"
+          # デバッグ情報
+          dir $env:GITHUB_WORKSPACE
+          dir (Join-Path $env:GITHUB_WORKSPACE "scripts")
 
       - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
