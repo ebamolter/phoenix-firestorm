@@ -6,7 +6,15 @@ on:
       branch_or_tag:
         description: 'Build target branch or tag'
         required: true
-        default: '7.2.0_preview'  # ← ここを修正
+        default: '7.2.0_preview'
+      enable_libvlc:
+        description: "Enable LibVLC support"
+        required: true
+        default: "true"
+      libvlc_sdk_url:
+        description: "URL of LibVLC SDK (7z/zip)"
+        required: true
+        default: "https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z"
 
 jobs:
   build:
@@ -18,19 +26,17 @@ jobs:
         with:
           ref: ${{ github.event.inputs.branch_or_tag }}
 
-      - name: Install 7zip and autobuild
+      - name: Install dependencies
         run: |
           choco install 7zip --no-progress -y
-          curl -L https://downloads.secondlife.com/hg/autobuild/autobuild-windows.zip -o autobuild.zip
-          mkdir C:\autobuild
-          tar -xf autobuild.zip -C C:\autobuild
-          echo "C:\autobuild" >> $GITHUB_PATH
+          choco install python3 --no-progress -y
         shell: pwsh
 
       - name: Download and Extract LibVLC
+        if: ${{ github.event.inputs.enable_libvlc == 'true' }}
         run: |
           mkdir _temp
-          curl -L "https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z" -o _temp/libvlc.7z
+          curl -L "${{ github.event.inputs.libvlc_sdk_url }}" -o _temp/libvlc.7z
           mkdir _temp/libvlc_pkg
           7z x _temp/libvlc.7z -o_temp/libvlc_pkg
         shell: pwsh
@@ -43,31 +49,32 @@ jobs:
           echo "AUTOBUILD_VARIABLES_FILE=${{ github.workspace }}/autobuild.xml" >> $GITHUB_ENV
         shell: bash
 
-      - name: Configure Firestorm
+      - name: Add autobuild to PATH
+        run: |
+          echo "${{ github.workspace }}/develop.py" >> $GITHUB_PATH
+          echo "${{ github.workspace }}/autobuild" >> $GITHUB_PATH
+        shell: bash
+
+      - name: Configure with configure_firestorm.sh
         working-directory: ${{ github.workspace }}
         shell: bash
         run: |
           set -x
-          if [[ -f "./indra/scripts/configure_firestorm.sh" ]]; then
-            if [[ -n "$LIBVLC_INCLUDE_DIR" ]]; then
-              ./indra/scripts/configure_firestorm.sh --platform windows -- -A x64 \
-                -DLL_TESTS:BOOL=FALSE \
-                -DPACKAGE:BOOL=Off \
-                -DMEDIAPLUGIN_LIBVLC:BOOL=ON \
-                -DUSE_VLC:BOOL=ON \
-                "-DLibVLC_INCLUDE_DIR=$LIBVLC_INCLUDE_DIR" \
-                "-DLibVLC_LIBRARY=$LIBVLC_LIB_DIR/libvlc.lib" \
-                "-DLibVLC_CORE_LIBRARY=$LIBVLC_LIB_DIR/libvlccore.lib"
-            else
-              ./indra/scripts/configure_firestorm.sh --platform windows -- -A x64 \
-                -DLL_TESTS:BOOL=FALSE \
-                -DPACKAGE:BOOL=Off \
-                -DMEDIAPLUGIN_LIBVLC:BOOL=OFF \
-                -DUSE_VLC:BOOL=OFF
-            fi
+          if [[ "${{ github.event.inputs.enable_libvlc }}" == "true" ]]; then
+            ./indra/scripts/configure_firestorm.sh --platform windows -- -A x64 \
+              -DLL_TESTS:BOOL=FALSE \
+              -DPACKAGE:BOOL=Off \
+              -DMEDIAPLUGIN_LIBVLC:BOOL=ON \
+              -DUSE_VLC:BOOL=ON \
+              "-DLibVLC_INCLUDE_DIR=$LIBVLC_INCLUDE_DIR" \
+              "-DLibVLC_LIBRARY=$LIBVLC_LIB_DIR/libvlc.lib" \
+              "-DLibVLC_CORE_LIBRARY=$LIBVLC_LIB_DIR/libvlccore.lib"
           else
-            echo "❌ configure_firestorm.sh not found"
-            exit 1
+            ./indra/scripts/configure_firestorm.sh --platform windows -- -A x64 \
+              -DLL_TESTS:BOOL=FALSE \
+              -DPACKAGE:BOOL=Off \
+              -DMEDIAPLUGIN_LIBVLC:BOOL=OFF \
+              -DUSE_VLC:BOOL=OFF
           fi
 
       - name: Check Firestorm.sln
