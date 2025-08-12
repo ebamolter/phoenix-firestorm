@@ -25,12 +25,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch_or_tag }}
+          submodules: recursive
 
       - name: Install dependencies
         run: |
           choco install 7zip --no-progress -y
           choco install python3 --no-progress -y
-        shell: pwsh
 
       - name: Download and Extract LibVLC
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
@@ -39,24 +39,23 @@ jobs:
           curl -L "${{ github.event.inputs.libvlc_sdk_url }}" -o _temp/libvlc.7z
           mkdir _temp/libvlc_pkg
           7z x _temp/libvlc.7z -o_temp/libvlc_pkg
-        shell: pwsh
 
       - name: Set Environment Variables
         run: |
           echo "LIBVLC_INCLUDE_DIR=${{ github.workspace }}/_temp/libvlc_pkg/vlc-3.0.9.2/sdk/include" >> $GITHUB_ENV
           echo "LIBVLC_LIB_DIR=${{ github.workspace }}/_temp/libvlc_pkg/vlc-3.0.9.2/sdk/lib" >> $GITHUB_ENV
           echo "LL_BUILD=windows" >> $GITHUB_ENV
+          echo "AUTOBUILD_VSVER=170" >> $GITHUB_ENV
           echo "AUTOBUILD_VARIABLES_FILE=${{ github.workspace }}/autobuild.xml" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Add autobuild to PATH
-        run: |
+          echo "${{ github.workspace }}" >> $GITHUB_PATH
           echo "${{ github.workspace }}/develop.py" >> $GITHUB_PATH
           echo "${{ github.workspace }}/autobuild" >> $GITHUB_PATH
         shell: bash
 
-      - name: Configure with configure_firestorm.sh
-        working-directory: ${{ github.workspace }}
+      - name: Setup MSBuild Path
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Configure Firestorm
         shell: bash
         run: |
           set -x
@@ -77,13 +76,11 @@ jobs:
               -DUSE_VLC:BOOL=OFF
           fi
 
-      - name: Check Firestorm.sln
+      - name: Ensure .sln exists
         shell: pwsh
         run: |
-          if (Test-Path "build-vc170-64\Firestorm.sln") {
-            Write-Output "✅ Firestorm.sln found."
-          } else {
-            Write-Output "❌ Firestorm.sln NOT found, generating with cmake..."
+          if (-Not (Test-Path "build-vc170-64\Firestorm.sln")) {
+            Write-Output "❌ Firestorm.sln missing, generating with CMake..."
             cmake -S "${{ github.workspace }}/indra" -B "${{ github.workspace }}/build-vc170-64" -G "Visual Studio 17 2022" -A x64
           }
 
