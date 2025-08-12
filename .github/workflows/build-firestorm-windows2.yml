@@ -94,13 +94,17 @@ jobs:
             echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV
           }
 
-      - name: Debug Current Directory and Files
-        shell: bash
+      - name: Debug: Show workspace structure
+        shell: pwsh
         run: |
-          echo "Current directory:"
+          Write-Output "=== Current directory ==="
           pwd
-          echo "Files in current directory:"
-          ls -l
+          Write-Output "=== GITHUB_WORKSPACE ==="
+          Write-Output $env:GITHUB_WORKSPACE
+          Write-Output "=== Top level in workspace ==="
+          Get-ChildItem -Force $env:GITHUB_WORKSPACE
+          Write-Output "=== Full recursive listing ==="
+          Get-ChildItem -Recurse -Force $env:GITHUB_WORKSPACE | ForEach-Object { $_.FullName }
 
       - name: Configure with configure_firestorm.sh
         shell: bash
