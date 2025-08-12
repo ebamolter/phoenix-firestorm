@@ -94,7 +94,7 @@ jobs:
             echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV
           }
 
-      - name: Debug: Show workspace structure
+      - name: Debug Show workspace structure
         shell: pwsh
         run: |
           Write-Output "=== Current directory ==="
