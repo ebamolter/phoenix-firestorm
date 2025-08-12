@@ -1,4 +1,4 @@
-name: Build Firestorm Windows (No Package)
+name: Build Firestorm Windows (With LibVLC)
 
 on:
   workflow_dispatch:
@@ -8,46 +8,65 @@ on:
         required: true
         default: 'master'
       enable_libvlc:
-        description: "Enable LibVLC support"
+        description: 'Enable LibVLC support'
         required: true
-        default: "true"
+        default: 'true'
       libvlc_sdk_url:
-        description: "URL of LibVLC SDK (7z/zip)"
+        description: 'URL of LibVLC SDK (7z/zip)'
         required: true
-        default: "https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z"
+        default: 'https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z'
 
 jobs:
   build:
     runs-on: windows-2022
 
+    env:
+      AUTOBUILD_BUILD_ID: ${{ github.run_id }}
+      LIBVLC_PACKAGE_DIR: ${{ runner.temp }}/libvlc_pkg
+      LIBVLC_SDK_DIR: ${{ runner.temp }}/libvlc_pkg/pkg/vlc-3.0.9.2
+      LIBVLC_INCLUDE_DIR: ${{ runner.temp }}/libvlc_pkg/pkg/vlc-3.0.9.2/sdk/include
+      LIBVLC_LIB_DIR: ${{ runner.temp }}/libvlc_pkg/pkg/vlc-3.0.9.2/sdk/lib
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Firestorm
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.branch_or_tag }}
 
       - name: Install 7zip
-        run: choco install 7zip -y
+        uses: crazy-max/ghaction-chocolatey@v2
+        with:
+          args: install 7zip -y
 
       - name: Extract LibVLC SDK
+        if: ${{ github.event.inputs.enable_libvlc == 'true' }}
         run: |
-          mkdir libvlc_pkg
-          curl -L ${{ github.event.inputs.libvlc_sdk_url }} -o libvlc.7z
-          7z x libvlc.7z -olibvlc_pkg
-        shell: pwsh
+          mkdir $env:LIBVLC_PACKAGE_DIR
+          Invoke-WebRequest "${{ github.event.inputs.libvlc_sdk_url }}" -OutFile "$env:LIBVLC_PACKAGE_DIR/libvlc.7z"
+          7z x "$env:LIBVLC_PACKAGE_DIR/libvlc.7z" -o"$env:LIBVLC_PACKAGE_DIR/pkg"
 
       - name: Ensure configure_firestorm.sh is LF and UTF-8
+        shell: pwsh
         run: |
           $path = "indra/scripts/configure_firestorm.sh"
-          (Get-Content $path) | Set-Content -Encoding UTF8 -NoByteOrderMark $path
-        shell: pwsh
+
+          if (!(Test-Path $path)) {
+            Write-Error "ファイルが存在しません: $path"
+          }
+
+          $content = Get-Content $path -Raw
+          $content = $content -replace "`r`n", "`n"
+          $content = $content -replace "`r", "`n"
+          [System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))
 
       - name: Configure with/without LibVLC
-        working-directory: indra
         shell: pwsh
         run: |
-          $cfg = "./scripts/configure_firestorm.sh"
+          $cfg = "indra/scripts/configure_firestorm.sh"
 
           if (!(Test-Path $cfg)) {
             Write-Error "パスが無効です: $cfg"
-            exit 1
           }
 
           if ($env:LIBVLC_INCLUDE_DIR -and $env:LIBVLC_LIB_DIR) {
@@ -61,6 +80,7 @@ jobs:
               --config-script="$cfg" `
               -- -DPACKAGE:BOOL=Off
           }
-        env:
-          LIBVLC_INCLUDE_DIR: ${{ github.workspace }}\libvlc_pkg\vlc-3.0.9.2\sdk\include
-          LIBVLC_LIB_DIR: ${{ github.workspace }}\libvlc_pkg\vlc-3.0.9.2\sdk\lib
+
+      - name: Post Run actions/checkout@v4
+        run: echo "Complete"
+
