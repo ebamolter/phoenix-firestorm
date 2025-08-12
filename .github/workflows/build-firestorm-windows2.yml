@@ -41,30 +41,62 @@ jobs:
           echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
-      - name: Ensure configure_firestorm.sh in indra/scripts
+      # configure_firestorm.sh をルート/scripts, indra/scripts, さらに build-vc170-64/scripts に配置（相対参照どこでも拾えるように）
+      - name: Ensure configure_firestorm.sh in all expected locations
         shell: pwsh
         run: |
           $srcPaths = @(
             (Join-Path -Path $env:GITHUB_WORKSPACE -ChildPath 'scripts\configure_firestorm.sh'),
             (Join-Path -Path $env:GITHUB_WORKSPACE -ChildPath 'phoenix-firestorm\scripts\configure_firestorm.sh')
           )
-          $dst = Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'
-          New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
           $found = $false
           foreach ($src in $srcPaths) {
             if (Test-Path $src) {
-              Copy-Item $src $dst -Force
-              Write-Host "configure_firestorm.sh copied from $src to $dst"
               $found = $true
+              # ルート scripts
+              $dstRoot = Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh'
+              New-Item -ItemType Directory -Force -Path (Split-Path $dstRoot) | Out-Null
+              Copy-Item $src $dstRoot -Force
+              # indra/scripts
+              $dstIndra = Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'
+              New-Item -ItemType Directory -Force -Path (Split-Path $dstIndra) | Out-Null
+              Copy-Item $src $dstIndra -Force
+              # indra/build-vc170-64/scripts（configure が newview 下から ../scripts を引くケース対策）
+              $dstBuild = Join-Path $env:GITHUB_WORKSPACE 'indra\build-vc170-64\scripts\configure_firestorm.sh'
+              New-Item -ItemType Directory -Force -Path (Split-Path $dstBuild) | Out-Null
+              Copy-Item $src $dstBuild -Force
+              Write-Host "configure_firestorm.sh copied to: `n  $dstRoot`n  $dstIndra`n  $dstBuild"
               break
             }
           }
           if (-not $found) {
             $raw = 'https://raw.githubusercontent.com/FirestormViewer/phoenix-firestorm/master/scripts/configure_firestorm.sh'
-            Invoke-WebRequest -Uri $raw -OutFile $dst -UseBasicParsing
-            Write-Host "configure_firestorm.sh fetched from remote"
+            $dstRoot = Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh'
+            $dstIndra = Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'
+            $dstBuild = Join-Path $env:GITHUB_WORKSPACE 'indra\build-vc170-64\scripts\configure_firestorm.sh'
+            New-Item -ItemType Directory -Force -Path (Split-Path $dstRoot) | Out-Null
+            New-Item -ItemType Directory -Force -Path (Split-Path $dstIndra) | Out-Null
+            New-Item -ItemType Directory -Force -Path (Split-Path $dstBuild) | Out-Null
+            Invoke-WebRequest -Uri $raw -OutFile $dstRoot -UseBasicParsing
+            Copy-Item $dstRoot $dstIndra -Force
+            Copy-Item $dstRoot $dstBuild -Force
+            Write-Host "configure_firestorm.sh fetched and placed in all locations"
           }
-          & 'C:\Program Files\Git\bin\bash.exe' -lc "chmod +x 'indra/scripts/configure_firestorm.sh' || true"
+
+          # 改行を LF に正規化（BOM なし）
+          $targets = @(
+            (Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh'),
+            (Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'),
+            (Join-Path $env:GITHUB_WORKSPACE 'indra\build-vc170-64\scripts\configure_firestorm.sh')
+          )
+          foreach ($t in $targets) {
+            if (Test-Path $t) {
+              $raw = Get-Content $t -Raw
+              $lf  = $raw -replace "`r`n","`n"
+              Set-Content -Path $t -Value $lf -NoNewline -Encoding utf8NoBOM
+            }
+          }
+          & 'C:\Program Files\Git\bin\bash.exe' -lc "chmod +x 'scripts/configure_firestorm.sh' 'indra/scripts/configure_firestorm.sh' 'indra/build-vc170-64/scripts/configure_firestorm.sh' || true"
 
       - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
@@ -76,25 +108,20 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           $fname = "$dst\$(Split-Path $url -Leaf)"
           Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
-
           if ($fname.ToLower().EndsWith(".7z")) {
             & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
           } else {
             Expand-Archive -Path $fname -DestinationPath $zip -Force
           }
-
           $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             Test-Path (Join-Path $_.FullName "vlc\vlc.h")
           } | Select-Object -First 1
-
           $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib"))
           } | Select-Object -First 1
-
           $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
             (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0
           } | Select-Object -First 1
-
           if ($inc -and $libdir) {
             echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
             echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
@@ -103,6 +130,17 @@ jobs:
             echo "LIBVLC_DETECTED=0" >> $env:GITHUB_ENV
           }
           if ($dlldir) { echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV }
+
+      # どの階層からも ../scripts/configure_firestorm.sh が見えるか一発確認
+      - name: Sanity check (from potential working dirs)
+        shell: bash
+        run: |
+          set -e
+          echo "[repo root] ls -l scripts/configure_firestorm.sh"; ls -l scripts/configure_firestorm.sh || true
+          echo "[indra/newview] ls -l ../scripts/configure_firestorm.sh"
+          (cd indra/newview 2>/dev/null && ls -l ../scripts/configure_firestorm.sh) || true
+          echo "[indra/build-vc170-64/newview] ls -l ../scripts/configure_firestorm.sh"
+          (mkdir -p indra/build-vc170-64/newview && cd indra/build-vc170-64/newview && ls -l ../scripts/configure_firestorm.sh) || true
 
       - name: Configure (with/without LibVLC)
         shell: pwsh
