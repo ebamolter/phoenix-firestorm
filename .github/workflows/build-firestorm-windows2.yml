@@ -94,8 +94,17 @@ jobs:
             echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV
           }
 
+      - name: Debug Current Directory and Files
+        shell: bash
+        run: |
+          echo "Current directory:"
+          pwd
+          echo "Files in current directory:"
+          ls -l
+
       - name: Configure with configure_firestorm.sh
         shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
           set -x
           if [[ "$LIBVLC_DETECTED" != "0" ]]; then
@@ -117,12 +126,13 @@ jobs:
 
       - name: Check for Firestorm.sln
         shell: pwsh
+        working-directory: ${{ github.workspace }}
         run: |
           if (Test-Path "build-vc170-64\Firestorm.sln") {
             Write-Output "✅ Firestorm.sln found."
           } else {
             Write-Output "❌ Firestorm.sln NOT found, attempting manual cmake generation..."
-            cmake -S . -B build-vc170-64 -G "Visual Studio 17 2022" -A x64
+            cmake -S "${{ github.workspace }}" -B "${{ github.workspace }}\build-vc170-64" -G "Visual Studio 17 2022" -A x64
           }
 
       - name: List .sln file for confirmation
