@@ -21,13 +21,13 @@ jobs:
     runs-on: windows-2022
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch_or_tag }}
           submodules: recursive
 
-      - name: Install Dependencies
+      - name: Install Autobuild
         run: |
           choco install -y sevenzip git cmake python3
           pip install autobuild
@@ -41,16 +41,13 @@ jobs:
           echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
           echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
-      - name: Ensure scripts/configure_firestorm.sh is in place
-        shell: pwsh
+      - name: Prepare configure_firestorm.sh
+        shell: bash
         run: |
-          $src = Join-Path $env:GITHUB_WORKSPACE "phoenix-firestorm/scripts/configure_firestorm.sh"
-          $dst = Join-Path $env:GITHUB_WORKSPACE "scripts/configure_firestorm.sh"
-          if (!(Test-Path $dst)) {
-            New-Item -ItemType Directory -Path (Split-Path $dst) -Force | Out-Null
-            Copy-Item -Path $src -Destination $dst -Force
-          }
-          & "C:\Program Files\Git\bin\bash.exe" -lc "chmod +x '$($dst -replace '\\','/')'"
+          mkdir -p indra/scripts
+          cp scripts/configure_firestorm.sh indra/scripts/configure_firestorm.sh
+          dos2unix indra/scripts/configure_firestorm.sh
+          chmod +x indra/scripts/configure_firestorm.sh
 
       - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
@@ -80,15 +77,13 @@ jobs:
             echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
             echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
           }
-          if ($dlldir) {
-            echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV
-          }
+          if ($dlldir) { echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV }
 
-      - name: Configure (with or without LibVLC)
+      - name: Configure with autobuild
+        working-directory: indra
         shell: pwsh
-        working-directory: ${{ github.workspace }}/indra
         run: |
-          $cfg = "$env:GITHUB_WORKSPACE/scripts/configure_firestorm.sh"
+          $cfg = "$env:GITHUB_WORKSPACE/indra/scripts/configure_firestorm.sh"
           if ($env:LIBVLC_INCLUDE_DIR -and $env:LIBVLC_LIB_DIR) {
             autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
               --config-script="$cfg" `
@@ -101,7 +96,7 @@ jobs:
               -- -DPACKAGE:BOOL=Off
           }
 
-      - name: Build Viewer
+      - name: Build
         run: autobuild build -c ReleaseFS_open -A 64 --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
 
       - name: Upload unpackaged viewer
