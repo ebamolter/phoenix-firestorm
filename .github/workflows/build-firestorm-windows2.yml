@@ -1,64 +1,45 @@
-name: Build Firestorm Windows (LibVLC, no package)
+name: Build Firestorm Windows (No Package)
 
 on:
   workflow_dispatch:
     inputs:
       branch_or_tag:
-        description: 'Branch or tag (例: master または Firestorm_7.1.13)'
+        description: 'Build target branch or tag (e.g., master or Firestorm_7.1.13)'
         required: true
-        default: '7.2.0_preview'
+        default: 'master'
       enable_libvlc:
-        description: 'LibVLCを有効化する'
+        description: "Enable LibVLC support"
         required: true
-        default: 'true'
+        default: "true"
       libvlc_sdk_url:
-        description: 'VLC SDK URL (.7z/.zip, includes vlc.h & libvlc.lib)'
+        description: "URL of LibVLC SDK (7z/zip)"
         required: true
-        default: 'https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z'
+        default: "https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z"
 
 jobs:
   build:
     runs-on: windows-2022
 
     steps:
-      - name: Checkout Firestorm Source
+      - name: Checkout source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.branch_or_tag }}
-          submodules: recursive
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
-      - name: Clone fs-build-variables
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\src" | Out-Null
-          cd "$env:USERPROFILE\src"
-          git clone https://github.com/FirestormViewer/fs-build-variables.git
+          fetch-depth: 1
 
       - name: Set AUTOBUILD_VARIABLES_FILE
+        run: echo "AUTOBUILD_VARIABLES_FILE=variables.txt" >> $env:GITHUB_ENV
         shell: pwsh
-        run: |
-          echo "AUTOBUILD_VARIABLES_FILE=$env:USERPROFILE\src\fs-build-variables\variables" >> $env:GITHUB_ENV
-          echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
 
       - name: Install Autobuild & Requirements
-        shell: pwsh
         run: |
-          python -m pip install -r requirements.txt
-          autobuild --version
+          choco install 7zip --no-progress
+          choco install git -y --no-progress
+        shell: powershell
 
       - name: Fetch LibVLC SDK (7z/zip)
-        if: ${{ github.event.inputs.enable_libvlc == 'true' }}
-        shell: pwsh
+        if: ${{ inputs.enable_libvlc == 'true' }}
         run: |
-          $url = "${{ github.event.inputs.libvlc_sdk_url }}"
+          $url = "${{ inputs.libvlc_sdk_url }}"
           $dst = "$env:RUNNER_TEMP\libvlc_pkg"
           $zip = "$dst\pkg"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
@@ -66,13 +47,13 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
 
           if ($fname.ToLower().EndsWith(".7z")) {
-            & "C:\\Program Files\\7-Zip\\7z.exe" x $fname "-o$zip" -y | Out-Null
+            & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
           } else {
             Expand-Archive -Path $fname -DestinationPath $zip -Force
           }
 
           $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            Test-Path (Join-Path $_.FullName "vlc\\vlc.h")
+            Test-Path (Join-Path $_.FullName "vlc\vlc.h")
           } | Select-Object -First 1
 
           $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
@@ -84,24 +65,22 @@ jobs:
           } | Select-Object -First 1
 
           if ($inc -and $libdir) {
-            echo "LIBVLC_DETECTED=1" >> $env:GITHUB_ENV
-            echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
-            echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
+            echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
+            echo "LIBVLC_LIB_DIR=$($libdir.FullName)" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
+            echo "LIBVLC_DETECTED=1" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
           } else {
-            echo "LIBVLC_DETECTED=0" >> $env:GITHUB_ENV
+            echo "LIBVLC_DETECTED=0" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
           }
 
           if ($dlldir) {
-            echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV
+            echo "PATH=$($dlldir.FullName);$env:PATH" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
           }
+        shell: pwsh
 
       - name: Configure with configure_firestorm.sh
         shell: bash
         run: |
-          export AUTOBUILD_VARIABLES_FILE="$GITHUB_WORKSPACE/fs-build-variables/variables"
-          echo "AUTOBUILD_VARIABLES_FILE=$AUTOBUILD_VARIABLES_FILE"
-
-          if [[ "$LIBVLC_DETECTED" != "0" ]]; then
+          if [[ "$LIBVLC_DETECTED" == "1" ]]; then
             ./indra/scripts/configure_firestorm.sh -A 64 -c ReleaseFS_open -- \
               -DLL_TESTS:BOOL=FALSE \
               -DPACKAGE:BOOL=Off \
@@ -116,15 +95,7 @@ jobs:
               -DPACKAGE:BOOL=Off \
               -DMEDIAPLUGIN_LIBVLC:BOOL=OFF \
               -DUSE_VLC:BOOL=OFF
-          fi
 
       - name: Build
-        shell: pwsh
         run: autobuild build -A 64 -c ReleaseFS_open --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
-
-      - name: Upload unpackaged viewer
-        uses: actions/upload-artifact@v4
-        with:
-          name: firestorm-windows-unpackaged
-          path: |
-            build-vc*-64/newview/Release
+        shell: pwsh
