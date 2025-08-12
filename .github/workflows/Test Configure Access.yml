@@ -1,0 +1,46 @@
+name: Test Configure Access
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch_or_tag:
+        description: 'Firestorm branch or tag'
+        required: true
+        default: 'master'
+
+jobs:
+  test-configure-access:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout Firestorm
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch_or_tag }}
+          submodules: recursive
+
+      - name: Setup Python and Autobuild
+        shell: pwsh
+        run: |
+          choco install -y git cmake python3
+          python -m pip install --upgrade pip
+          python -m pip install autobuild
+
+      - name: Log working directory
+        shell: pwsh
+        run: |
+          Write-Host "Current dir:"
+          Get-Location
+          Write-Host "Listing scripts/"
+          Get-ChildItem -Recurse -Path ./indra/scripts
+
+      - name: Try autobuild configure (continue on error)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          try {
+            autobuild configure --version
+            Write-Host "✅ configure_firestorm.sh に到達できました（または autobuild configure が成功しました）"
+          } catch {
+            Write-Host "❌ configure_firestorm.sh に到達できませんでした。パスが通っていないか、存在しない可能性があります。"
+          }
