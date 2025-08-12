@@ -1,130 +1,51 @@
-name: Build Firestorm Windows (LibVLC, no package)
+name: Build Firestorm Windows (No Packaging)
 
 on:
   workflow_dispatch:
-    inputs:
-      branch_or_tag:
-        description: 'Branch or tag (例: 7.2.0_preview / Firestorm_7.1.13)'
-        required: true
-        default: '7.2.0_preview'
-      enable_libvlc:
-        description: 'LibVLCを有効化する'
-        required: true
-        default: 'true'
-      libvlc_sdk_url:
-        description: 'VLC 3.x Windows x64 7z/zip のURL（include と .lib を含むもの）'
-        required: true
-        default: 'https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z'
 
 jobs:
   build:
-    runs-on: windows-2022
+    runs-on: windows-latest
 
     steps:
-      - name: Checkout phoenix-firestorm
-        uses: actions/checkout@v4
+      - name: Checkout Firestorm source
+        uses: actions/checkout@v3
         with:
-          fetch-depth: 1
-          ref: ${{ github.event.inputs.branch_or_tag }}
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: python -m pip install --upgrade pip
-
-      - name: Clone fs-build-variables
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\src" | Out-Null
-          cd "$env:USERPROFILE\src"
-          git clone https://github.com/FirestormViewer/fs-build-variables.git
+          submodules: true
 
       - name: Install Autobuild
-        shell: pwsh
         run: |
-          python -m pip install -r requirements.txt
-          autobuild --version
+          choco install python --version=3.10.9
+          choco install sevenzip
+          pip install autobuild
 
       - name: Set AUTOBUILD_VARIABLES_FILE
-        shell: pwsh
-        run: echo "AUTOBUILD_VARIABLES_FILE=$env:USERPROFILE\src\fs-build-variables\variables" >> $env:GITHUB_ENV
+        run: echo "AUTOBUILD_VARIABLES_FILE=autobuild.xml" >> $env:GITHUB_ENV
 
-      # ---- LibVLC SDK を取得（7z/zip両対応）----
       - name: Fetch LibVLC SDK (7z/zip)
-        if: ${{ github.event.inputs.enable_libvlc == 'true' }}
-        shell: pwsh
         run: |
-          $url = "${{ github.event.inputs.libvlc_sdk_url }}"
-          $dst = "$env:RUNNER_TEMP\libvlc_pkg"
-          $zip = "$dst\pkg"
-          New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          $fname = "$dst\$(Split-Path $url -Leaf)"
-          Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
-
-          if ($fname.ToLower().EndsWith(".7z")) {
-            $sevenZip = "C:\Program Files\7-Zip\7z.exe"
-            & "$sevenZip" x $fname "-o$zip" -y | Out-Null
+          $url = "https://download.videolan.org/pub/videolan/vlc/3.0.9.2/win64/vlc-3.0.9.2-win64.7z"
+          $zip = "vlc-sdk.7z"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          7z x $zip -o"vlc"
+          $ibdir = Get-ChildItem -Recurse -Path "vlc" -Directory | Where-Object { $_.Name -eq "sdk" }
+          if ($ibdir) {
+            echo "LIBVLC_SDK_PATH=$($ibdir.FullName)" >> $env:GITHUB_ENV
           } else {
-            Expand-Archive -Path $fname -DestinationPath $zip -Force
+            echo "LibVLC SDK not found in extracted files."
+            exit 1
           }
 
-          # include と .lib を検出
-          $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            Test-Path (Join-Path $_.FullName "vlc\vlc.h")
-          } | Select-Object -First 1
-
-          $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            Test-Path (Join-Path $_.FullName "libvlc.lib") -and Test-Path (Join-Path $_.FullName "libvlccore.lib")
-          } | Select-Object -First 1
-
-          # DLL（実行時用）も見つけたらPATHに追加
-          $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object {
-            (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0
-          } | Select-Object -First 1
-
-          if ($inc -and $libdir) {
-            echo "LIBVLC_INCLUDE_DIR=$($inc.FullName)" >> $env:GITHUB_ENV
-            echo "LIBVLC_LIB_DIR=$($libdir.FullName)" >> $env:GITHUB_ENV
-          } else {
-            echo "LIBVLC_DETECTED=0" >> $env:GITHUB_ENV
-          }
-          if ($dlldir) { echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV }
-
-      # ---- Configure（SDKが見つからなければ自動でOFF）----
       - name: Configure (with/without LibVLC)
-        shell: pwsh
         run: |
-          $haveInc = "${{ env.LIBVLC_INCLUDE_DIR }}"
-          $haveLib = "${{ env.LIBVLC_LIB_DIR }}"
-          if ("${{ github.event.inputs.enable_libvlc }}" -eq "true" -and $haveInc -ne "" -and $haveLib -ne "") {
-            Write-Host ">> Enabling LibVLC"
-            autobuild configure -A 64 -c ReleaseFS_open -- `
-              -DLL_TESTS:BOOL=FALSE `
-              -DPACKAGE:BOOL=Off `
-              -DMEDIAPLUGIN_LIBVLC:BOOL=ON `
-              -DUSE_VLC:BOOL=ON `
-              "-DLibVLC_INCLUDE_DIR=$haveInc" `
-              "-DLibVLC_LIBRARY=$haveLib\libvlc.lib" `
-              "-DLibVLC_CORE_LIBRARY=$haveLib\libvlccore.lib"
-          } else {
-            Write-Host ">> LibVLC disabled (SDK not detected)"
-            autobuild configure -A 64 -c ReleaseFS_open -- `
-              -DLL_TESTS:BOOL=FALSE `
-              -DPACKAGE:BOOL=Off `
-              -DMEDIAPLUGIN_LIBVLC:BOOL=OFF `
-              -Dlibvlc:BOOL=OFF `
-              -DUSE_VLC:BOOL=OFF
-          }
+          autobuild configure -c ReleaseFS_open -- --version --platform windows
 
       - name: Build
-        shell: pwsh
-        run: autobuild build -A 64 -c ReleaseFS_open
+        run: |
+          autobuild build -c ReleaseFS_open -A 64 --no-configure -- /m
 
       - name: Upload unpackaged viewer
         uses: actions/upload-artifact@v4
         with:
-          name: firestorm-windows-unpackaged
-          path: |
-            build-vc*\newview\packaged
-            build-vc*-64\newview\packaged
+          name: firestorm-unpackaged
+          path: build-vc170-64/newview/Release
