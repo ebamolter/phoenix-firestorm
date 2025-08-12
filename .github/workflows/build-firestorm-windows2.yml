@@ -35,13 +35,14 @@ jobs:
       - name: Download variables.txt
         shell: pwsh
         run: |
-          $url = 'https://raw.githubusercontent.com/FirestormViewer/fs-build-variables/38e0e2c27dac75af6701f47eae95f583eac53613/variables'
+          $url = "https://raw.githubusercontent.com/FirestormViewer/fs-build-variables/38e0e2c27dac75af6701f47eae95f583eac53613/variables"
           $dst = "$env:RUNNER_TEMP\variables"
           Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
-          "AUTOBUILD_VARIABLES_FILE=$dst"       | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AUTOBUILD_VARIABLES_FILE=$dst" | Out-File -FilePath $env:GITHUB_ENV -Append
           "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Ensure configure_firestorm.sh (root/scripts, indra/scripts, build-vc170-64/scripts)
+      # configure_firestorm.sh を4か所に用意（どこから ../scripts を引かれても当たるように）
+      - name: Ensure configure_firestorm.sh in all expected locations
         shell: pwsh
         run: |
           $candidates = @(
@@ -57,24 +58,27 @@ jobs:
           }
 
           $dests = @(
-            (Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh'),
-            (Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'),
-            (Join-Path $env:GITHUB_WORKSPACE 'indra\build-vc170-64\scripts\configure_firestorm.sh')
+            (Join-Path $env:GITHUB_WORKSPACE 'scripts\configure_firestorm.sh'),                 # repo root/scripts
+            (Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'),          # indra/scripts
+            (Join-Path $env:GITHUB_WORKSPACE 'indra\build-vc170-64\scripts\configure_firestorm.sh'), # indra/build-*/scripts
+            (Join-Path $env:GITHUB_WORKSPACE 'build-vc170-64\scripts\configure_firestorm.sh')  # ← 追加: repo root/build-*/scripts
           )
-          New-Item -ItemType Directory -Force -Path (Join-Path $env:GITHUB_WORKSPACE 'indra\build-vc170-64\newview') | Out-Null
 
-          $srcReal = (Resolve-Path $src).Path
+          # build ディレクトリ（仮）も先に作る
+          foreach ($dir in @(
+            (Join-Path $env:GITHUB_WORKSPACE 'indra\build-vc170-64\newview'),
+            (Join-Path $env:GITHUB_WORKSPACE 'build-vc170-64\newview')
+          )) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+
           foreach ($d in $dests) {
             New-Item -ItemType Directory -Force -Path (Split-Path $d) | Out-Null
-            $dReal = (Resolve-Path $d -ErrorAction SilentlyContinue)?.Path
-            if ($dReal -and ($dReal -ieq $srcReal)) { continue }
             Copy-Item $src $d -Force
-            # LF & UTF-8 (no BOM)
-            $rawText = Get-Content $d -Raw
-            $lfText  = $rawText -replace "`r`n","`n"
-            Set-Content -Path $d -Value $lfText -NoNewline -Encoding utf8NoBOM
+            # LF + UTF-8 (no BOM)
+            $raw = Get-Content $d -Raw
+            $lf  = $raw -replace "`r`n","`n"
+            Set-Content -Path $d -Value $lf -NoNewline -Encoding utf8NoBOM
           }
-          & 'C:\Program Files\Git\bin\bash.exe' -lc "chmod +x 'scripts/configure_firestorm.sh' 'indra/scripts/configure_firestorm.sh' 'indra/build-vc170-64/scripts/configure_firestorm.sh' || true"
+          & 'C:\Program Files\Git\bin\bash.exe' -lc "chmod +x 'scripts/configure_firestorm.sh' 'indra/scripts/configure_firestorm.sh' 'indra/build-vc170-64/scripts/configure_firestorm.sh' 'build-vc170-64/scripts/configure_firestorm.sh' || true"
 
       - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
@@ -86,14 +90,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           $fname = "$dst\$(Split-Path $url -Leaf)"
           Invoke-WebRequest -Uri $url -OutFile $fname -UseBasicParsing
-          if ($fname.ToLower().EndsWith('.7z')) {
-            & 'C:\Program Files\7-Zip\7z.exe' x $fname "-o$zip" -y | Out-Null
+          if ($fname.ToLower().EndsWith(".7z")) {
+            & "C:\Program Files\7-Zip\7z.exe" x $fname "-o$zip" -y | Out-Null
           } else {
             Expand-Archive -Path $fname -DestinationPath $zip -Force
           }
-          $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'vlc\vlc.h') } | Select-Object -First 1
-          $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { (Test-Path (Join-Path $_.FullName 'libvlc.lib')) -and (Test-Path (Join-Path $_.FullName 'libvlccore.lib')) } | Select-Object -First 1
-          $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { (Get-ChildItem -Path $_.FullName -Filter 'libvlc.dll' -ErrorAction SilentlyContinue).Count -gt 0 } | Select-Object -First 1
+          $inc = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { Test-Path (Join-Path $_.FullName "vlc\vlc.h") } | Select-Object -First 1
+          $libdir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { (Test-Path (Join-Path $_.FullName "libvlc.lib")) -and (Test-Path (Join-Path $_.FullName "libvlccore.lib")) } | Select-Object -First 1
+          $dlldir = Get-ChildItem -Recurse -Path $zip -Directory | Where-Object { (Get-ChildItem -Path $_.FullName -Filter "libvlc.dll" -ErrorAction SilentlyContinue).Count -gt 0 } | Select-Object -First 1
           if ($inc -and $libdir) {
             "LIBVLC_INCLUDE_DIR=$($inc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
             "LIBVLC_LIB_DIR=$($libdir.FullName)"  | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -102,6 +106,16 @@ jobs:
             "LIBVLC_DETECTED=0"                   | Out-File -FilePath $env:GITHUB_ENV -Append
           }
           if ($dlldir) { "PATH=$($dlldir.FullName);$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append }
+
+      # 参照テスト（失敗しても続行）
+      - name: Sanity check (non-fatal)
+        shell: bash
+        run: |
+          set +e
+          for d in "." "indra" "indra/newview" "indra/build-vc170-64/newview" "build-vc170-64/newview"; do
+            echo "== CWD: $d =="; (cd "$d" 2>/dev/null && pwd && ls -l ../scripts/configure_firestorm.sh || echo NOTFOUND)
+          done
+          true
 
       - name: Configure (with/without LibVLC)
         shell: pwsh
