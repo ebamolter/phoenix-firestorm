@@ -32,55 +32,9 @@ jobs:
           choco install -y sevenzip git cmake python3
           pip install autobuild
 
-      - name: Download variables.txt
-        shell: pwsh
+      - name: Set AUTOBUILD_VARIABLES_FILE
         run: |
-          $url = "https://raw.githubusercontent.com/FirestormViewer/fs-build-variables/38e0e2c27dac75af6701f47eae95f583eac53613/variables"
-          $dst = "$env:RUNNER_TEMP\variables"
-          Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
-          echo "AUTOBUILD_VARIABLES_FILE=$dst" >> $env:GITHUB_ENV
-          echo "AUTOBUILD_BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_ENV
-
-      - name: Ensure configure_firestorm.sh in expected location
-        shell: pwsh
-        run: |
-          $possiblePaths = @(
-            (Join-Path -Path $env:GITHUB_WORKSPACE -ChildPath 'scripts\configure_firestorm.sh'),
-            (Join-Path -Path $env:GITHUB_WORKSPACE -ChildPath 'phoenix-firestorm\scripts\configure_firestorm.sh')
-          )
-          $found = $false
-          foreach ($path in $possiblePaths) {
-            if (Test-Path $path) {
-              $dst = Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'
-              New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
-              Copy-Item $path $dst -Force
-              Write-Host "configure_firestorm.sh found at $path and copied to $dst"
-              $found = $true
-              break
-            }
-          }
-          if (-not $found) {
-            Write-Host 'configure_firestorm.sh not found locally. Fetching from remote...'
-            $dst = Join-Path $env:GITHUB_WORKSPACE 'indra\scripts\configure_firestorm.sh'
-            New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
-            $raw = 'https://raw.githubusercontent.com/FirestormViewer/phoenix-firestorm/master/scripts/configure_firestorm.sh'
-            Invoke-WebRequest -Uri $raw -OutFile $dst -UseBasicParsing
-          }
-          & 'C:\Program Files\Git\bin\bash.exe' -lc "chmod +x 'indra/scripts/configure_firestorm.sh' || true"
-
-      - name: Verify scripts/configure_firestorm.sh and patch if missing
-        shell: pwsh
-        run: |
-          $scriptPath = Join-Path $env:GITHUB_WORKSPACE "scripts\configure_firestorm.sh"
-          if (!(Test-Path $scriptPath)) {
-            Write-Host "configure_firestorm.sh not found. Fetching a fallback copy..."
-            New-Item -ItemType Directory -Force -Path (Split-Path $scriptPath) | Out-Null
-            $raw = "https://raw.githubusercontent.com/FirestormViewer/phoenix-firestorm/master/scripts/configure_firestorm.sh"
-            Invoke-WebRequest -Uri $raw -OutFile $scriptPath -UseBasicParsing
-          }
-          & "C:\Program Files\Git\bin\bash.exe" -lc "chmod +x '$scriptPath' || true"
-          dir $env:GITHUB_WORKSPACE
-          dir (Join-Path $env:GITHUB_WORKSPACE "scripts")
+          echo "AUTOBUILD_VARIABLES_FILE=$env:GITHUB_WORKSPACE\autobuild.xml" >> $env:GITHUB_ENV
 
       - name: Fetch LibVLC SDK (7z/zip)
         if: ${{ github.event.inputs.enable_libvlc == 'true' }}
@@ -121,24 +75,18 @@ jobs:
           if ($dlldir) { echo "PATH=$($dlldir.FullName);$env:PATH" >> $env:GITHUB_ENV }
 
       - name: Configure (with/without LibVLC)
-        shell: pwsh
-        working-directory: ./indra
         run: |
           if ($env:LIBVLC_DETECTED -ne "0") {
-            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- `
-              --with-libvlc-includes="$env:LIBVLC_INCLUDE_DIR" `
-              --with-libvlc-libs="$env:LIBVLC_LIB_DIR" `
-              -- -DPACKAGE:BOOL=Off
+            autobuild configure --platform windows -- --with-libvlc-includes="$env:LIBVLC_INCLUDE_DIR" --with-libvlc-libs="$env:LIBVLC_LIB_DIR"
           } else {
-            autobuild configure -A 64 -c ReleaseFS_open --platform windows -- -DPACKAGE:BOOL=Off
+            autobuild configure --platform windows
           }
 
       - name: Build
-        working-directory: ./indra
         run: autobuild build -c ReleaseFS_open -A 64 --no-configure -- /m:1 /v:m "/clp:ErrorsOnly;Summary"
 
       - name: Upload unpackaged viewer
         uses: actions/upload-artifact@v4
         with:
           name: firestorm-unpackaged
-          path: indra/build-vc170-64/newview/Release
+          path: build-vc170-64/newview/Release
